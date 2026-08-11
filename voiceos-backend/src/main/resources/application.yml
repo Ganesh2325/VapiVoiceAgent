@@ -1,0 +1,205 @@
+# =============================================================================
+# VoiceOS Backend — Application Configuration
+# =============================================================================
+
+spring:
+  application:
+    name: voiceos-backend
+
+  # ─── Thread Configuration (Java 21 Virtual Threads) ──────────────────────
+  threads:
+    virtual:
+      enabled: true
+
+  # ─── Database ─────────────────────────────────────────────────────────────
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5433/voiceos}
+    username: ${DATABASE_USERNAME:voiceos}
+    password: ${DATABASE_PASSWORD:Ganesh23}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: VoiceOS-HikariPool
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      auto-commit: false
+
+  jpa:
+    hibernate:
+      ddl-auto: validate        # NEVER use create or update in any real env
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+        order_inserts: true
+        order_updates: true
+        batch_versioned_data: true
+        jdbc.batch_size: 25
+
+  # ─── Flyway ───────────────────────────────────────────────────────────────
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+    validate-on-migrate: true
+
+  # ─── Redis ────────────────────────────────────────────────────────────────
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:voiceos_redis_password}
+      timeout: 5000
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+
+  # ─── Jackson ──────────────────────────────────────────────────────────────
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+    default-property-inclusion: non_null
+    time-zone: UTC
+
+  # ─── WebSocket ────────────────────────────────────────────────────────────
+  websocket:
+    message-size-limit: 65536
+    send-buffer-size-limit: 524288
+    send-time-limit: 10000
+
+  # ─── Spring AI — Gemini & Groq ───────────────────────────────────────────
+  ai:
+    vertex:
+      ai:
+        gemini:
+          project-id: ${GCP_PROJECT_ID:voiceos-dev}
+          location: ${GCP_LOCATION:us-central1}
+          chat:
+            options:
+              model: ${GEMINI_MODEL:gemini-2.0-flash}
+              temperature: 0.7
+    openai:
+      api-key: ${GROQ_API_KEY:mock_groq_key}
+      base-url: https://api.groq.com/openai/v1
+      chat:
+        options:
+          model: ${GROQ_MODEL:llama-3.3-70b-versatile}
+          temperature: 0.7
+    qdrant:
+      host: ${QDRANT_HOST:localhost}
+      port: ${QDRANT_PORT:6334}
+      api-key: ${QDRANT_API_KEY:}
+      collection-name: ${QDRANT_COLLECTION_NAME:voiceos_embeddings}
+
+# ─── Actuator ───────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,loggers
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when-authorized
+      show-components: when-authorized
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  tracing:
+    sampling:
+      probability: 1.0
+
+# ─── OpenAPI / Swagger ───────────────────────────────────────────────────────
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui
+    operationsSorter: method
+    tagsSorter: alpha
+    display-request-duration: true
+  show-actuator: false
+
+# ─── VoiceOS Application Properties ─────────────────────────────────────────
+voiceos:
+  # AI Provider
+  ai:
+    provider: ${AI_PROVIDER:gemini}
+    mock: ${MOCK_EXTERNAL_APIS:true}
+    retry:
+      max-attempts: 3
+      initial-delay-ms: 1000
+      multiplier: 2.0
+
+  # JWT
+  jwt:
+    secret: ${JWT_SECRET:default_dev_secret_replace_in_production_must_be_very_long}
+    expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+    refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:604800000}
+
+  # Voice
+  voice:
+    provider: ${VOICE_PROVIDER:vapi}
+    vapi:
+      api-key: ${VAPI_API_KEY:}
+      assistant-id: ${VAPI_ASSISTANT_ID:}
+      webhook-secret: ${VAPI_WEBHOOK_SECRET:}
+      public-key: ${VAPI_PUBLIC_KEY:}
+      base-url: https://api.vapi.ai
+
+  # Security
+  security:
+    cors:
+      allowed-origins: ${FRONTEND_URL:http://localhost:3000},http://localhost:5173
+    rate-limit:
+      enabled: ${RATE_LIMIT_ENABLED:true}
+      requests-per-minute: ${RATE_LIMIT_REQUESTS_PER_MINUTE:60}
+
+  # Webhooks
+  webhooks:
+    vapi-secret: ${VAPI_WEBHOOK_SECRET:}
+    github-secret: ${WEBHOOK_GITHUB_SECRET:}
+    calendar-secret: ${WEBHOOK_CALENDAR_SECRET:}
+
+  # External Integrations
+  integrations:
+    github:
+      token: ${GITHUB_TOKEN:}
+    smtp:
+      host: ${SMTP_HOST:smtp.gmail.com}
+      port: ${SMTP_PORT:587}
+      username: ${SMTP_USERNAME:}
+      password: ${SMTP_PASSWORD:}
+
+  # RAG / Vector Store
+  rag:
+    chunk-size: 500
+    chunk-overlap: 50
+    top-k: 5
+
+  # Agent System
+  agents:
+    execution-timeout-ms: 30000
+    max-retries: 2
+
+# ─── Logging ─────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.voiceos: INFO
+    org.springframework.security: WARN
+    org.springframework.web: WARN
+    org.hibernate.SQL: WARN
+    org.flywaydb: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

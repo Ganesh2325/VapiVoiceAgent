@@ -1,0 +1,43 @@
+# =============================================================================
+# VoiceOS — .gitignore
+# =============================================================================
+
+# ─── Environment / Secrets ───────────────────────────────────────────────────
+.env
+*.env.local
+*.env.production
+secrets/
+
+# ─── Java / Maven ────────────────────────────────────────────────────────────
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+.mvn/wrapper/maven-wrapper.jar
+
+# ─── IDE ─────────────────────────────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/settings.json
+*.swp
+*.swo
+.DS_Store
+
+# ─── Node / Frontend ─────────────────────────────────────────────────────────
+node_modules/
+dist/
+.cache/
+
+# ─── Docker volumes (local dev) ──────────────────────────────────────────────
+postgres_data/
+redis_data/
+qdrant_data/
+
+# ─── Test reports ────────────────────────────────────────────────────────────
+surefire-reports/
+*.html
+
+# ─── Uploads (local dev only) ────────────────────────────────────────────────
+uploads/

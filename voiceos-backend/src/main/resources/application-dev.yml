@@ -1,0 +1,21 @@
+# =============================================================================
+# VoiceOS — Development Profile Overrides
+# =============================================================================
+# Active when: SPRING_PROFILES_ACTIVE=dev
+
+spring:
+  jpa:
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+voiceos:
+  ai:
+    mock: true     # Use mock AI responses in dev to save API quota
+
+logging:
+  level:
+    com.voiceos: DEBUG
+    org.springframework.security: DEBUG
+    org.flywaydb: DEBUG
