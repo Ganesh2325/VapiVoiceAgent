@@ -2,22 +2,21 @@ package com.voiceos.api.controller;
 
 import com.voiceos.domain.entity.User;
 import com.voiceos.domain.repository.EvaluationRepository;
-import com.voiceos.domain.repository.UserRepository;
-import com.voiceos.exception.VoiceOsException;
+import com.voiceos.security.AuthenticatedUserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
  * AI Quality & Evaluation Metrics REST API.
+ * Missing measurements are returned as {@code unavailable}, never invented.
  */
 @RestController
 @RequestMapping("/api/v1/metrics")
@@ -26,40 +25,30 @@ import java.util.Map;
 public class MetricsController {
 
     private final EvaluationRepository evaluationRepository;
-    private final UserRepository userRepository;
+    private final AuthenticatedUserService authenticatedUserService;
 
-    public MetricsController(EvaluationRepository evaluationRepository, UserRepository userRepository) {
+    public MetricsController(EvaluationRepository evaluationRepository,
+                             AuthenticatedUserService authenticatedUserService) {
         this.evaluationRepository = evaluationRepository;
-        this.userRepository = userRepository;
+        this.authenticatedUserService = authenticatedUserService;
     }
 
     @Operation(summary = "Get platform AI quality scores and metrics")
     @GetMapping
-    public ResponseEntity<Map<String, Object>> getMetrics(
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        User user = getUser(userDetails);
+    public ResponseEntity<Map<String, Object>> getMetrics() {
+        User user = authenticatedUserService.requireUser();
 
         Double avgToolSuccess = evaluationRepository.findAverageToolSuccessRateByUserId(user.getId());
         Double avgLatency = evaluationRepository.findAverageLatencyByUserId(user.getId());
         long successfulTasks = evaluationRepository.countSuccessfulTasksByUserId(user.getId());
 
-        return ResponseEntity.ok(Map.of(
-                "taskSuccessRate", 0.965,
-                "toolSuccessRate", avgToolSuccess != null ? avgToolSuccess : 0.982,
-                "averageLatencyMs", avgLatency != null ? avgLatency : 485.0,
-                "successfulTasksCount", successfulTasks > 0 ? successfulTasks : 14,
-                "hallucinationRate", 0.024,
-                "approvalCompliance", 1.0
-        ));
-    }
-
-    private User getUser(UserDetails userDetails) {
-        if (userDetails == null) {
-            return userRepository.findAll().stream().findFirst()
-                    .orElseThrow(() -> VoiceOsException.badRequest("User not found"));
-        }
-        return userRepository.findByEmail(userDetails.getUsername())
-                .orElseThrow(() -> VoiceOsException.notFound("User", userDetails.getUsername()));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("taskSuccessRate", "unavailable");
+        body.put("toolSuccessRate", avgToolSuccess != null ? avgToolSuccess : "unavailable");
+        body.put("averageLatencyMs", avgLatency != null ? avgLatency : "unavailable");
+        body.put("successfulTasksCount", successfulTasks);
+        body.put("hallucinationRate", "unavailable");
+        body.put("approvalCompliance", "unavailable");
+        return ResponseEntity.ok(body);
     }
 }

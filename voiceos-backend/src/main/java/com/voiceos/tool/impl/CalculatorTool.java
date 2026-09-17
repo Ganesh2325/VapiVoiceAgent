@@ -1,21 +1,33 @@
 package com.voiceos.tool.impl;
 
+import com.voiceos.provider.ProviderMode;
+import com.voiceos.provider.ProviderRequest;
+import com.voiceos.provider.ProviderResult;
+import com.voiceos.provider.ProviderResults;
+import com.voiceos.provider.calculator.CalculatorProvider;
 import com.voiceos.tool.core.Tool;
 import com.voiceos.tool.core.ToolResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
 /**
- * Deterministic Calculator tool for budgeting and arithmetic.
- * Risk Level: LOW (safe, read-only calculation).
+ * Deterministic Calculator tool for arithmetic.
+ * Risk Level: LOW. Provider: REAL local arithmetic.
  */
 @Component
 public class CalculatorTool implements Tool {
 
     private static final Logger log = LoggerFactory.getLogger(CalculatorTool.class);
+    private final CalculatorProvider provider;
+
+    public CalculatorTool(CalculatorProvider provider) {
+        this.provider = Objects.requireNonNull(provider, "CalculatorProvider is required");
+    }
 
     @Override
     public String getName() {
@@ -24,12 +36,27 @@ public class CalculatorTool implements Tool {
 
     @Override
     public String getDescription() {
-        return "Performs mathematical and financial calculations (e.g. total trip costs, currency conversion, budget estimates).";
+        return "Performs mathematical calculations. REAL local arithmetic; result is computed, not hardcoded.";
     }
 
     @Override
     public ToolRiskLevel getRiskLevel() {
         return ToolRiskLevel.LOW;
+    }
+
+    @Override
+    public String getProviderName() {
+        return provider.getName();
+    }
+
+    @Override
+    public ProviderMode getProviderMode() {
+        return provider.getMode();
+    }
+
+    @Override
+    public long getTimeoutMs() {
+        return 5_000L;
     }
 
     @Override
@@ -42,57 +69,14 @@ public class CalculatorTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> params) {
-        long startMs = System.currentTimeMillis();
-        try {
-            String expression = (String) params.getOrDefault("expression", "");
-            String operation = (String) params.getOrDefault("operation", "evaluate");
-
-            log.info("Calculator executing: expr='{}', op='{}'", expression, operation);
-
-            double result = evaluateExpression(expression);
-            long latency = System.currentTimeMillis() - startMs;
-
-            return ToolResult.success(
-                    Map.of("expression", expression, "result", result),
-                    String.format(java.util.Locale.US, "%.2f", result),
-                    latency
-            );
-        } catch (Exception e) {
-            long latency = System.currentTimeMillis() - startMs;
-            return ToolResult.failure("Calculation error: " + e.getMessage(), latency);
-        }
-    }
-
-    private double evaluateExpression(String expr) {
-        if (expr == null || expr.isBlank()) return 0.0;
-        String clean = expr.replaceAll("[^0-9.+\\-*/]", " ").trim();
-        if (clean.isBlank()) return 0.0;
-
-        try {
-            // Handle multiplication
-            if (clean.contains("*")) {
-                String[] parts = clean.split("\\*");
-                double prod = 1.0;
-                for (String p : parts) {
-                    if (!p.trim().isEmpty()) {
-                        prod *= Double.parseDouble(p.trim());
-                    }
-                }
-                return prod;
-            }
-
-            // Handle addition
-            String[] tokens = clean.split("\\+");
-            double sum = 0.0;
-            for (String t : tokens) {
-                String trimmed = t.trim();
-                if (!trimmed.isEmpty()) {
-                    sum += Double.parseDouble(trimmed);
-                }
-            }
-            return sum;
-        } catch (Exception ignored) {
-            return 0.0;
-        }
+        Map<String, Object> safe = new HashMap<>(params != null ? params : Map.of());
+        safe.remove("provider");
+        safe.remove("providerName");
+        safe.remove("providerClass");
+        String expression = String.valueOf(safe.getOrDefault("expression", ""));
+        log.info("Calculator executing: expr='{}', provider={} mode={}",
+                expression, provider.getName(), provider.getMode());
+        ProviderResult result = provider.execute(new ProviderRequest("evaluate", safe, getTimeoutMs()));
+        return ProviderResults.toToolResult(result);
     }
 }

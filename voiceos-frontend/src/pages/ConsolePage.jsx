@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Vapi from '@vapi-ai/web';
 import { Phone, PhoneOff, Mic, Send, Terminal, Zap, ArrowRight, Cpu } from 'lucide-react';
+import { apiFetch, fetchActionTimeline } from '../services/api';
 import { wsService } from '../services/WebSocketService';
-
-const API_BASE = 'http://localhost:8080/api/v1';
 
 export default function ConsolePage({ isCallActive, setIsCallActive }) {
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -29,9 +28,8 @@ export default function ConsolePage({ isCallActive, setIsCallActive }) {
     }
   ]);
 
-  const [executionTimeline, setExecutionTimeline] = useState([
-    { step: 1, agent: 'System', action: 'Console Initialized', status: 'COMPLETED', latency: '0ms' }
-  ]);
+  const [executionTimeline, setExecutionTimeline] = useState([]);
+  const [lastAction, setLastAction] = useState(null);
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -60,7 +58,7 @@ export default function ConsolePage({ isCallActive, setIsCallActive }) {
         vapi.on('call-start', () => {
           setIsCallActive(true);
           setExecutionTimeline(prev => [
-            { step: prev.length + 1, agent: 'Vapi WebRTC', action: 'Voice Session Connected', status: 'COMPLETED', latency: '40ms' },
+            { step: prev.length + 1, agent: 'Vapi WebRTC', action: 'Voice Session Connected', status: 'COMPLETED', latency: 'unavailable' },
             ...prev
           ]);
         });
@@ -75,6 +73,13 @@ export default function ConsolePage({ isCallActive, setIsCallActive }) {
         vapi.on('volume-level', (vol) => setVolumeLevel(vol));
 
         vapi.on('message', (msg) => {
+          const incomingCallId = msg?.call?.id || msg?.callId;
+          if (incomingCallId) {
+            apiFetch('/voice/sessions', {
+              method: 'POST',
+              body: JSON.stringify({ callId: incomingCallId, conversationId })
+            }).catch(() => {});
+          }
           if (msg.type === 'transcript' && msg.transcriptType === 'final') {
             const newMsg = {
               id: Date.now().toString(),
@@ -129,7 +134,15 @@ export default function ConsolePage({ isCallActive, setIsCallActive }) {
       // Create conversation if not exists
       let currentConvId = conversationId;
       if (!currentConvId) {
-          const initRes = await fetch(`http://localhost:8080/api/v1/conversations`, { method: 'POST' });
+          const initRes = await apiFetch(`/conversations`, { method: 'POST', body: JSON.stringify({ title: text.slice(0, 80) }) });
+          if (initRes.status === 401) {
+              setMessages(prev => [...prev, {
+                  id: Date.now().toString(), role: 'assistant', agent: 'System',
+                  content: 'Authentication required. Log in from the header, then retry.',
+                  timestamp: new Date().toLocaleTimeString()
+              }]);
+              return;
+          }
           if(initRes.ok) {
               const c = await initRes.json();
               currentConvId = c.id;
@@ -137,27 +150,84 @@ export default function ConsolePage({ isCallActive, setIsCallActive }) {
           }
       }
 
-      const res = await fetch(`http://localhost:8080/api/v1/agent/execute`, {
+      const res = await apiFetch(`/agent/execute`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversationId: currentConvId,
           input: text
         })
       });
 
+      if (res.status === 401) {
+        setMessages(prev => [...prev, {
+            id: Date.now().toString(), role: 'assistant', agent: 'System',
+            content: 'Authentication required. Log in from the header, then retry.',
+            timestamp: new Date().toLocaleTimeString()
+        }]);
+        return;
+      }
+      if (res.status === 403) {
+        setMessages(prev => [...prev, {
+            id: Date.now().toString(), role: 'assistant', agent: 'System',
+            content: 'You are not authorized to use this conversation.',
+            timestamp: new Date().toLocaleTimeString()
+        }]);
+        return;
+      }
+
       if (res.ok) {
         const data = await res.json();
         const botMsg = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          agent: data.activeAgent || 'VoiceOS Orchestrator',
+          agent: data.activeAgent || data.agent || 'VoiceOS',
           content: data.responseText,
           timestamp: new Date().toLocaleTimeString(),
           tools: data.toolsExecuted || [],
           awaitingApproval: data.awaitingApproval
         };
         setMessages(prev => [...prev, botMsg]);
+        setLastAction({
+          actionId: data.actionId,
+          status: data.status,
+          agent: data.agent || data.activeAgent,
+          tool: data.tool,
+          provider: data.provider,
+          providerMode: data.providerMode,
+          result: data.result,
+          error: data.error,
+          duration: data.totalLatencyMs
+        });
+        if (data.actionId) {
+          const timeline = await fetchActionTimeline(data.actionId);
+          if (timeline) {
+            setLastAction(prev => ({
+              ...(prev || {}),
+              ...timeline,
+              duration: timeline.durationMs != null ? timeline.durationMs : data.totalLatencyMs
+            }));
+            if (Array.isArray(timeline.timeline) && timeline.timeline.length > 0) {
+              setExecutionTimeline(timeline.timeline.map((item, idx) => ({
+                step: idx + 1,
+                agent: item.agent || timeline.agent || 'ActionEngine',
+                action: item.message || item.type,
+                status: item.status || timeline.status,
+                latency: item.timestamp || ''
+              })));
+            }
+          }
+        } else {
+          setExecutionTimeline(prev => [
+            {
+              step: prev.length + 1,
+              agent: data.agent || data.activeAgent || 'ActionEngine',
+              action: `${data.tool || 'action'} → ${data.status}`,
+              status: data.status || 'COMPLETED',
+              latency: `${data.totalLatencyMs || 0}ms`
+            },
+            ...prev
+          ]);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -286,8 +356,14 @@ export default function ConsolePage({ isCallActive, setIsCallActive }) {
             <h4 style={{ fontSize: '0.95rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Terminal size={16} color="#818cf8" /> Live Agent Execution Timeline
             </h4>
-            <span className="badge badge-primary">WebSocket Stream</span>
+            <span className="badge badge-primary">Action Timeline</span>
           </div>
+
+          {executionTimeline.length === 0 && !lastAction && (
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
+              No actions yet. Execute a request to load a real backend timeline.
+            </div>
+          )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {executionTimeline.map((item, idx) => (
@@ -322,15 +398,51 @@ export default function ConsolePage({ isCallActive, setIsCallActive }) {
             ))}
           </div>
 
+          {lastAction && (
+            <div style={{ marginTop: '20px', padding: '12px', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)' }}>
+              <h5 style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '8px' }}>
+                Last Action
+              </h5>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                <div>actionId: {lastAction.actionId || 'n/a'}</div>
+                <div>status: {lastAction.status || 'n/a'}</div>
+                <div>agent: {lastAction.agent || 'n/a'}</div>
+                <div>tool: {lastAction.tool || 'n/a'}</div>
+                <div>provider: {lastAction.provider || 'n/a'}</div>
+                <div>mode: {lastAction.providerMode || 'unavailable'}</div>
+                <div>policy: {lastAction.policyDecision || 'unavailable'}</div>
+                <div>verification: {lastAction.verificationPassed == null ? 'unavailable' : String(lastAction.verificationPassed)}</div>
+                <div>result: {lastAction.result || 'n/a'}</div>
+                <div>error: {lastAction.error || 'none'}</div>
+                {Array.isArray(lastAction.missingFields) && lastAction.missingFields.length > 0 && (
+                  <div>missing: {lastAction.missingFields.join(', ')}</div>
+                )}
+                <div>duration: {lastAction.duration != null ? `${lastAction.duration}ms` : (lastAction.durationMs != null ? `${lastAction.durationMs}ms` : 'n/a')}</div>
+              </div>
+              {Array.isArray(lastAction.timeline) && lastAction.timeline.length > 0 && (
+                <div style={{ marginTop: '10px' }}>
+                  <h5 style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px' }}>
+                    Backend Timeline
+                  </h5>
+                  {lastAction.timeline.map((item, idx) => (
+                    <div key={idx} style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                      {item.type} {item.stepType ? `(${item.stepType})` : ''} — {item.message || item.status || ''}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <div style={{ marginTop: '24px' }}>
             <h5 style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '10px' }}>
               Suggested Voice Instructions
             </h5>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {[
+                'Calculate 125 multiplied by 24',
                 'Plan my trip to Bangalore next Friday',
-                'What are my saved travel preferences?',
-                'Remember that I prefer morning flights'
+                'What are my saved travel preferences?'
               ].map((prompt, idx) => (
                 <button
                   key={idx}

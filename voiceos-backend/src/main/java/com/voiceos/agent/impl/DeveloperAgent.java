@@ -1,6 +1,7 @@
 package com.voiceos.agent.impl;
 
 import com.voiceos.agent.core.Agent;
+import com.voiceos.agent.core.AgentCapability;
 import com.voiceos.agent.core.AgentContext;
 import com.voiceos.agent.core.AgentResult;
 import com.voiceos.ai.LLMProvider;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Specialized Developer & Engineering Agent.
@@ -54,6 +56,11 @@ public class DeveloperAgent implements Agent {
     @Override
     public int getPriority() {
         return 20;
+    }
+
+    @Override
+    public Set<AgentCapability> capabilities() {
+        return Set.of(AgentCapability.DEVELOPMENT, AgentCapability.GITHUB);
     }
 
     @Override

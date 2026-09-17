@@ -71,11 +71,7 @@ public class MemorySaveTool implements Tool {
             user = userRepository.findById(userId).orElse(null);
         }
         if (user == null) {
-            user = userRepository.findAll().stream().findFirst().orElse(null);
-        }
-
-        if (user == null) {
-            return ToolResult.failure("No valid user found to save memory.", System.currentTimeMillis() - startMs);
+            return ToolResult.failure("Authenticated userId is required to save memory.", System.currentTimeMillis() - startMs);
         }
 
         Memory memory = new Memory(user, Memory.MemoryType.LONG_TERM, key, content);

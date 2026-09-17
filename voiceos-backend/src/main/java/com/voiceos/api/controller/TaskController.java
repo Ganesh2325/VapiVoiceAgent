@@ -3,8 +3,8 @@ package com.voiceos.api.controller;
 import com.voiceos.domain.entity.Task;
 import com.voiceos.domain.entity.User;
 import com.voiceos.domain.repository.TaskRepository;
-import com.voiceos.domain.repository.UserRepository;
 import com.voiceos.exception.VoiceOsException;
+import com.voiceos.security.AuthenticatedUserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -12,8 +12,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -31,21 +29,20 @@ import java.util.UUID;
 public class TaskController {
 
     private final TaskRepository taskRepository;
-    private final UserRepository userRepository;
+    private final AuthenticatedUserService authenticatedUserService;
 
-    public TaskController(TaskRepository taskRepository, UserRepository userRepository) {
+    public TaskController(TaskRepository taskRepository, AuthenticatedUserService authenticatedUserService) {
         this.taskRepository = taskRepository;
-        this.userRepository = userRepository;
+        this.authenticatedUserService = authenticatedUserService;
     }
 
     @Operation(summary = "List user tasks")
     @GetMapping
     public ResponseEntity<List<Map<String, Object>>> listTasks(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
-            @AuthenticationPrincipal UserDetails userDetails
+            @RequestParam(defaultValue = "20") int size
     ) {
-        User user = getUser(userDetails);
+        User user = authenticatedUserService.requireUser();
         Page<Task> tasks = taskRepository.findByUserIdOrderByCreatedAtDesc(user.getId(), PageRequest.of(page, size));
 
         List<Map<String, Object>> response = tasks.getContent().stream()
@@ -64,11 +61,8 @@ public class TaskController {
 
     @Operation(summary = "Create a new task")
     @PostMapping
-    public ResponseEntity<Map<String, Object>> createTask(
-            @RequestBody Map<String, String> body,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        User user = getUser(userDetails);
+    public ResponseEntity<Map<String, Object>> createTask(@RequestBody Map<String, String> body) {
+        User user = authenticatedUserService.requireUser();
         String title = body.getOrDefault("title", "New Task");
         String description = body.getOrDefault("description", "");
         String priorityStr = body.getOrDefault("priority", "MEDIUM");
@@ -92,11 +86,8 @@ public class TaskController {
     @Operation(summary = "Mark task as complete")
     @PatchMapping("/{id}/complete")
     @Transactional
-    public ResponseEntity<Map<String, Object>> completeTask(
-            @PathVariable UUID id,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        User user = getUser(userDetails);
+    public ResponseEntity<Map<String, Object>> completeTask(@PathVariable UUID id) {
+        User user = authenticatedUserService.requireUser();
         Task task = taskRepository.findByIdAndUserId(id, user.getId())
                 .orElseThrow(() -> VoiceOsException.notFound("Task", id));
 
@@ -108,14 +99,5 @@ public class TaskController {
                 "status", "COMPLETED",
                 "completedAt", task.getCompletedAt().toString()
         ));
-    }
-
-    private User getUser(UserDetails userDetails) {
-        if (userDetails == null) {
-            return userRepository.findAll().stream().findFirst()
-                    .orElseThrow(() -> VoiceOsException.badRequest("User not found"));
-        }
-        return userRepository.findByEmail(userDetails.getUsername())
-                .orElseThrow(() -> VoiceOsException.notFound("User", userDetails.getUsername()));
     }
 }

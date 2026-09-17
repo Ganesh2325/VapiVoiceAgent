@@ -1,5 +1,8 @@
 package com.voiceos.orchestrator;
 
+import com.voiceos.action.engine.ActionEngine;
+import com.voiceos.action.model.ActionCommand;
+import com.voiceos.action.model.ActionExecutionResult;
 import com.voiceos.agent.core.Agent;
 import com.voiceos.agent.core.AgentContext;
 import com.voiceos.agent.core.AgentRegistry;
@@ -53,6 +56,7 @@ public class OrchestratorService {
     private final MemoryRepository memoryRepository;
     private final EvaluationRepository evaluationRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final ActionEngine actionEngine;
 
     public OrchestratorService(
             AgentRegistry agentRegistry,
@@ -66,7 +70,8 @@ public class OrchestratorService {
             ApprovalRepository approvalRepository,
             MemoryRepository memoryRepository,
             EvaluationRepository evaluationRepository,
-            SimpMessagingTemplate messagingTemplate
+            SimpMessagingTemplate messagingTemplate,
+            ActionEngine actionEngine
     ) {
         this.agentRegistry = agentRegistry;
         this.toolRegistry = toolRegistry;
@@ -80,6 +85,7 @@ public class OrchestratorService {
         this.memoryRepository = memoryRepository;
         this.evaluationRepository = evaluationRepository;
         this.messagingTemplate = messagingTemplate;
+        this.actionEngine = actionEngine;
     }
 
     /**
@@ -101,113 +107,27 @@ public class OrchestratorService {
     @Transactional
     public OrchestrationResult processUserRequest(UUID conversationId, UUID userId, String userInput) {
         long startMs = System.currentTimeMillis();
-        log.info("Orchestrator processing for conversation {} user {}: '{}'", conversationId, userId, userInput);
-
-        final UUID targetConvId = conversationId;
-        // 1. Load or Create Conversation
-        Conversation conversation;
-        if (targetConvId != null) {
-            conversation = conversationRepository.findById(targetConvId).orElseGet(() -> {
-                Conversation newConv = new Conversation();
-                newConv.setId(targetConvId);
-                newConv.setTitle("VoiceOS Session " + targetConvId.toString().substring(0, 8));
-                newConv.setStatus(Conversation.ConversationStatus.ACTIVE);
-                return conversationRepository.save(newConv);
-            });
-        } else {
-            conversation = new Conversation();
-            conversation.setTitle("VoiceOS Interaction");
-            conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
-            conversation = conversationRepository.save(conversation);
-        }
-        final UUID effectiveConvId = conversation.getId();
-
-        // 2. Persist User Message
-        Message userMessage = new Message(conversation, Message.MessageRole.USER, userInput);
-        messageRepository.save(userMessage);
-        conversation.setMessageCount(conversation.getMessageCount() + 1);
-
-        // 3. Retrieve relevant user memories
-        List<Memory> memories = memoryRepository.findByUserIdOrderByUpdatedAtDesc(userId);
-
-        // 4. Retrieve recent message history
-        List<Message> history = messageRepository.findByConversationIdOrderByCreatedAtAsc(effectiveConvId);
-
-        // 5. Build Agent Context
-        AgentContext context = new AgentContext(
-                effectiveConvId, userId, userInput, history, memories, new HashMap<>()
-        );
-
-        // Broadcast: Orchestrator started
-        broadcastEvent(effectiveConvId, "ORCHESTRATOR_STARTED", Map.of("userInput", userInput));
-
-        // 6. Check if this is a complex multi-step goal or single agent task
-        boolean isMultiStep = isMultiStepGoal(userInput);
-
-        AgentResult agentResult;
-        String finalResponse;
-
-        if (isMultiStep) {
-            agentResult = executeMultiStepPlan(conversation, context);
-            finalResponse = agentResult.responseText();
-        } else {
-            // Find single specialized agent or fallback to conversation
-            Agent targetAgent = agentRegistry.findHandler(context)
-                    .orElseGet(() -> agentRegistry.getAgent("ConversationAgent")
-                            .orElseThrow(() -> new IllegalStateException("ConversationAgent not found")));
-
-            log.info("Routing directly to single agent: '{}'", targetAgent.getName());
-            conversation.setActiveAgentName(targetAgent.getName());
-
-            // Create AgentExecution record
-            AgentExecution exec = new AgentExecution(conversation, conversation.getUser(), targetAgent.getName(), userInput);
-            exec.markStarted();
-            exec = agentExecutionRepository.save(exec);
-
-            broadcastEvent(conversationId, "AGENT_STARTED", Map.of("agent", targetAgent.getName()));
-
-            agentResult = targetAgent.execute(context);
-
-            if (agentResult.requiresApproval()) {
-                handleApprovalPause(conversation, exec, agentResult);
-                finalResponse = agentResult.responseText();
-            } else {
-                exec.markCompleted(agentResult.responseText());
-                agentExecutionRepository.save(exec);
-                finalResponse = agentResult.responseText();
-            }
-
-            broadcastEvent(conversationId, "AGENT_COMPLETED", Map.of(
-                    "agent", targetAgent.getName(),
-                    "requiresApproval", agentResult.requiresApproval()
-            ));
-        }
-
-        // 7. Save Assistant Message
-        Message assistantMessage = new Message(conversation, Message.MessageRole.ASSISTANT, finalResponse);
-        assistantMessage.setAgentName(conversation.getActiveAgentName());
-        messageRepository.save(assistantMessage);
-        conversation.setMessageCount(conversation.getMessageCount() + 1);
-        conversationRepository.save(conversation);
-
-        // 8. Record Evaluation
-        long totalLatencyMs = System.currentTimeMillis() - startMs;
-        Evaluation eval = new Evaluation(conversation, null);
-        eval.setTaskSuccess(agentResult.success());
-        eval.setToolSuccessRate(1.0);
-        eval.setLatencyMs(totalLatencyMs);
-        eval.setHallucinationScore(0.02);
-        evaluationRepository.save(eval);
-
-        broadcastEvent(conversationId, "EXECUTION_FINISHED", Map.of("latencyMs", totalLatencyMs));
-
-        return new OrchestrationResult(
+        log.info("Orchestrator delegating to ActionEngine conversation={} user={}", conversationId, userId);
+        ActionExecutionResult result = actionEngine.execute(new ActionCommand(
+                userId,
                 conversationId,
-                finalResponse,
-                conversation.getActiveAgentName(),
-                agentResult.requiresApproval(),
-                agentResult.toolExecutions(),
-                totalLatencyMs
+                null,
+                null,
+                null,
+                null,
+                "HTTP",
+                userInput,
+                null,
+                Map.of()
+        ));
+        long latency = result.totalLatencyMs() > 0 ? result.totalLatencyMs() : System.currentTimeMillis() - startMs;
+        return new OrchestrationResult(
+                result.conversationId() != null ? result.conversationId() : conversationId,
+                result.responseText(),
+                result.activeAgent(),
+                result.awaitingApproval(),
+                result.toolsExecuted(),
+                latency
         );
     }
 

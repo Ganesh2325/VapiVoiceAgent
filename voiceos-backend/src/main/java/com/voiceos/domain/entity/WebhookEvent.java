@@ -56,6 +56,18 @@ public class WebhookEvent {
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
+    @Column(name = "response_json", columnDefinition = "TEXT")
+    private String responseJson;
+
+    @Column(name = "call_id", length = 255)
+    private String callId;
+
+    @Column(name = "event_id", length = 255)
+    private String eventId;
+
+    @Column(name = "request_id", length = 64)
+    private String requestId;
+
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -108,6 +120,18 @@ public class WebhookEvent {
 
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+
+    public String getResponseJson() { return responseJson; }
+    public void setResponseJson(String responseJson) { this.responseJson = responseJson; }
+
+    public String getCallId() { return callId; }
+    public void setCallId(String callId) { this.callId = callId; }
+
+    public String getEventId() { return eventId; }
+    public void setEventId(String eventId) { this.eventId = eventId; }
+
+    public String getRequestId() { return requestId; }
+    public void setRequestId(String requestId) { this.requestId = requestId; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }

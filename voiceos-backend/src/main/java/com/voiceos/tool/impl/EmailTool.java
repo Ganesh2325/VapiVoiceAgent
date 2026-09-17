@@ -1,5 +1,9 @@
 package com.voiceos.tool.impl;
 
+import com.voiceos.provider.ProviderMode;
+import com.voiceos.provider.ProviderRequest;
+import com.voiceos.provider.ProviderResults;
+import com.voiceos.provider.email.EmailProvider;
 import com.voiceos.tool.core.Tool;
 import com.voiceos.tool.core.ToolResult;
 import org.slf4j.Logger;
@@ -7,17 +11,22 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Email Communication Tool.
- * Drafts and sends emails.
- * Risk Level: HIGH — Sending an email mutates external state and cannot be undone,
- * thus human approval is strictly required before actual dispatch.
+ * Risk Level: HIGH — sending mutates external state and requires approval.
+ * Delivery is MOCK in Phase 4.
  */
 @Component
 public class EmailTool implements Tool {
 
     private static final Logger log = LoggerFactory.getLogger(EmailTool.class);
+    private final EmailProvider provider;
+
+    public EmailTool(EmailProvider provider) {
+        this.provider = Objects.requireNonNull(provider, "EmailProvider is required");
+    }
 
     @Override
     public String getName() {
@@ -26,12 +35,22 @@ public class EmailTool implements Tool {
 
     @Override
     public String getDescription() {
-        return "Drafts and sends emails to recipients. Requires recipient, subject, and body.";
+        return "[MOCK] Drafts and simulates sending email. Does not deliver real mail.";
     }
 
     @Override
     public ToolRiskLevel getRiskLevel() {
-        return ToolRiskLevel.HIGH; // Triggers Human-in-the-Loop Approval!
+        return ToolRiskLevel.HIGH;
+    }
+
+    @Override
+    public String getProviderName() {
+        return provider.getName();
+    }
+
+    @Override
+    public ProviderMode getProviderMode() {
+        return provider.getMode();
     }
 
     @Override
@@ -50,19 +69,7 @@ public class EmailTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> params) {
-        long startMs = System.currentTimeMillis();
-        String recipient = params.get("recipient").toString();
-        String subject = params.get("subject").toString();
-        String body = params.get("body").toString();
-
-        log.info("[EMAIL DISPATCH] Sending email to '{}', subject='{}'", recipient, subject);
-
-        // Dispatches email or logs mock dispatch
-        long latency = System.currentTimeMillis() - startMs;
-        return ToolResult.success(
-                Map.of("recipient", recipient, "subject", subject, "status", "SENT"),
-                "Email sent successfully to " + recipient + " with subject: \"" + subject + "\".",
-                latency
-        );
+        log.info("EmailTool simulating send via {} mode={}", provider.getName(), provider.getMode());
+        return ProviderResults.toToolResult(provider.execute(new ProviderRequest("send", params, getTimeoutMs())));
     }
 }

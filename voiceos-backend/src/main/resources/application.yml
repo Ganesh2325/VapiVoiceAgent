@@ -15,7 +15,7 @@ spring:
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5433/voiceos}
     username: ${DATABASE_USERNAME:voiceos}
-    password: ${DATABASE_PASSWORD:Ganesh23}
+    password: ${DATABASE_PASSWORD:}
     driver-class-name: org.postgresql.Driver
     hikari:
       pool-name: VoiceOS-HikariPool
@@ -54,7 +54,7 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD:voiceos_redis_password}
+      password: ${REDIS_PASSWORD:}
       timeout: 5000
       lettuce:
         pool:
@@ -89,7 +89,7 @@ spring:
               model: ${GEMINI_MODEL:gemini-2.0-flash}
               temperature: 0.7
     openai:
-      api-key: ${GROQ_API_KEY:mock_groq_key}
+      api-key: ${GROQ_API_KEY:}
       base-url: https://api.groq.com/openai/v1
       chat:
         options:
@@ -142,9 +142,9 @@ voiceos:
       initial-delay-ms: 1000
       multiplier: 2.0
 
-  # JWT
+  # JWT — JWT_SECRET is required (fail-closed). No default secret.
   jwt:
-    secret: ${JWT_SECRET:default_dev_secret_replace_in_production_must_be_very_long}
+    secret: ${JWT_SECRET:}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}
     refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:604800000}
 
@@ -158,7 +158,7 @@ voiceos:
       public-key: ${VAPI_PUBLIC_KEY:}
       base-url: https://api.vapi.ai
 
-  # Security
+  # Security — never use * for authenticated traffic
   security:
     cors:
       allowed-origins: ${FRONTEND_URL:http://localhost:3000},http://localhost:5173
@@ -166,11 +166,13 @@ voiceos:
       enabled: ${RATE_LIMIT_ENABLED:true}
       requests-per-minute: ${RATE_LIMIT_REQUESTS_PER_MINUTE:60}
 
-  # Webhooks
+  # Webhooks — fail-closed unless allow-insecure-local is explicitly true
   webhooks:
     vapi-secret: ${VAPI_WEBHOOK_SECRET:}
     github-secret: ${WEBHOOK_GITHUB_SECRET:}
     calendar-secret: ${WEBHOOK_CALENDAR_SECRET:}
+    require-secret: ${VAPI_WEBHOOK_REQUIRE_SECRET:true}
+    allow-insecure-local: ${VAPI_WEBHOOK_ALLOW_INSECURE_LOCAL:false}
 
   # External Integrations
   integrations:
@@ -193,6 +195,35 @@ voiceos:
     execution-timeout-ms: 30000
     max-retries: 2
 
+  # Providers — calculator is REAL local arithmetic. Others default MOCK.
+  # Setting mode=REAL without a real implementation yields MISCONFIGURED / UNAVAILABLE.
+  # There is never a silent fallback from REAL to MOCK.
+  providers:
+    calculator:
+      enabled: true
+      mode: REAL
+      timeout-ms: ${VOICEOS_PROVIDER_CALCULATOR_TIMEOUT_MS:5000}
+    travel:
+      enabled: true
+      mode: ${VOICEOS_PROVIDER_TRAVEL_MODE:MOCK}
+      timeout-ms: 5000
+    whatsapp:
+      enabled: true
+      mode: ${VOICEOS_PROVIDER_WHATSAPP_MODE:MOCK}
+      timeout-ms: 5000
+    email:
+      enabled: true
+      mode: ${VOICEOS_PROVIDER_EMAIL_MODE:MOCK}
+      timeout-ms: 5000
+    calendar:
+      enabled: true
+      mode: ${VOICEOS_PROVIDER_CALENDAR_MODE:MOCK}
+      timeout-ms: 5000
+    payment:
+      enabled: true
+      mode: ${VOICEOS_PROVIDER_PAYMENT_MODE:MOCK}
+      timeout-ms: 5000
+
 # ─── Logging ─────────────────────────────────────────────────────────────────
 logging:
   level:
@@ -202,4 +233,4 @@ logging:
     org.hibernate.SQL: WARN
     org.flywaydb: INFO
   pattern:
-    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    console: "%d{HH:mm:ss.SSS} [%thread] [%X{requestId}] %-5level %logger{36} - %msg%n"

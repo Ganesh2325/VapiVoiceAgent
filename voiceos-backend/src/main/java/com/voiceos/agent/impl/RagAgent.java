@@ -1,6 +1,7 @@
 package com.voiceos.agent.impl;
 
 import com.voiceos.agent.core.Agent;
+import com.voiceos.agent.core.AgentCapability;
 import com.voiceos.agent.core.AgentContext;
 import com.voiceos.agent.core.AgentResult;
 import com.voiceos.ai.LLMProvider;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * RAG Agent (Retrieval-Augmented Generation).
@@ -47,6 +49,11 @@ public class RagAgent implements Agent {
         String input = context.userInput().toLowerCase();
         return input.contains("document") || input.contains("file") || input.contains("resume") 
             || input.contains("specification") || input.contains("search knowledge") || input.contains("pdf");
+    }
+
+    @Override
+    public Set<AgentCapability> capabilities() {
+        return Set.of(AgentCapability.DOCUMENTS);
     }
 
     @Override

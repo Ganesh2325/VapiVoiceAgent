@@ -27,10 +27,10 @@ class AgentRegistryTest {
     @BeforeEach
     void setUp() {
         mockLlmProvider = new MockLLMProvider();
-        toolRegistry = new ToolRegistry(List.of(new CalculatorTool(), new SearchTool()));
+        toolRegistry = new ToolRegistry(List.of(new CalculatorTool(new com.voiceos.provider.calculator.RealLocalCalculatorProvider()), new SearchTool()));
 
         ConversationAgent convAgent = new ConversationAgent(mockLlmProvider);
-        TravelAgent travelAgent = new TravelAgent(mockLlmProvider, toolRegistry);
+        TravelAgent travelAgent = new TravelAgent(toolRegistry);
 
         agentRegistry = new AgentRegistry(List.of(convAgent, travelAgent));
     }

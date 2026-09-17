@@ -1,30 +1,47 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
+import { apiFetch } from '../services/api';
 
 export default function ApprovalsPage({ setPendingApprovalsCount }) {
   const [approvals, setApprovals] = useState([]);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    fetch('http://localhost:8080/api/v1/approvals', {
-      headers: {
-        'Authorization': 'Bearer placeholder-if-needed'
-      }
-    })
-      .then(res => res.json())
-      .then(data => {
-        setApprovals(data);
-        setPendingApprovalsCount(data.filter(a => a.status === 'PENDING').length);
+    apiFetch('/approvals')
+      .then(async (res) => {
+        if (res.status === 401) {
+          setError('Authentication required. Log in from the header.');
+          setApprovals([]);
+          setPendingApprovalsCount(0);
+          return;
+        }
+        if (res.status === 403) {
+          setError('You are not authorized to view approvals.');
+          return;
+        }
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : [];
+        setApprovals(list);
+        setPendingApprovalsCount(list.filter(a => a.status === 'PENDING').length);
       })
-      .catch(console.error);
+      .catch(() => setError('Unable to load approvals.'));
   }, [setPendingApprovalsCount]);
 
   const handleAction = async (id, action) => {
     try {
-      const res = await fetch(`http://localhost:8080/api/v1/approvals/${id}/${action}`, {
+      const body = action === 'authenticate'
+        ? { token: 'mock-auth-token' }
+        : action === 'pay'
+          ? { transactionId: 'mock-txn-id' }
+          : {};
+      const res = await apiFetch(`/approvals/${id}/${action}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(action === 'authenticate' ? { token: 'mock-auth-token' } : action === 'pay' ? { transactionId: 'mock-txn-id' } : {})
+        body: JSON.stringify(body)
       });
+      if (res.status === 401) {
+        setError('Authentication required. Log in from the header.');
+        return;
+      }
       if (res.ok) {
         setApprovals(prev => prev.map(a => a.id === id ? { ...a, status: action === 'reject' ? 'REJECTED' : 'APPROVED' } : a));
         setPendingApprovalsCount(prev => prev - 1);
@@ -40,7 +57,9 @@ export default function ApprovalsPage({ setPendingApprovalsCount }) {
         <h2 style={{ fontSize: '1.4rem', fontWeight: 700 }}>Human-in-the-Loop Approval Queue</h2>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
           Actions classified as <strong>HIGH</strong> or <strong>CRITICAL</strong> risk require explicit human confirmation before execution.
+          Authenticate/Pay buttons send explicitly labeled <strong>MOCK</strong> credentials and are accepted only while mock mode is enabled.
         </p>
+        {error && <p style={{ color: '#f87171', fontSize: '0.85rem' }}>{error}</p>}
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -90,7 +109,7 @@ export default function ApprovalsPage({ setPendingApprovalsCount }) {
                   <XCircle size={16} /> Cancel
                 </button>
                 <button onClick={() => handleAction(appr.id, 'authenticate')} className="btn btn-primary">
-                  <Shield size={16} /> Complete Authentication
+                  <Shield size={16} /> Complete Authentication (MOCK)
                 </button>
               </div>
             )}
@@ -100,7 +119,7 @@ export default function ApprovalsPage({ setPendingApprovalsCount }) {
                   <XCircle size={16} /> Cancel
                 </button>
                 <button onClick={() => handleAction(appr.id, 'pay')} className="btn btn-success">
-                  <CheckCircle2 size={16} /> Complete Payment
+                  <CheckCircle2 size={16} /> Complete Payment (MOCK)
                 </button>
               </div>
             )}

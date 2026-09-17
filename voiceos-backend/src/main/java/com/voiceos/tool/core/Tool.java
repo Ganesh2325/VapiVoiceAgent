@@ -1,5 +1,7 @@
 package com.voiceos.tool.core;
 
+import com.voiceos.provider.ProviderMode;
+
 import java.util.Map;
 
 /**
@@ -64,6 +66,14 @@ public interface Tool {
      */
     default int getMaxRetries() {
         return 2;
+    }
+
+    default String getProviderName() {
+        return "none";
+    }
+
+    default ProviderMode getProviderMode() {
+        return ProviderMode.REAL;
     }
 
     /**

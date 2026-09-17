@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -16,11 +17,14 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.UUID;
 
 /**
  * JWT authentication filter.
  * Intercepts every request, extracts the Bearer token from the Authorization header,
  * validates it, and sets the authentication in the Spring Security context.
+ *
+ * <p>The raw token is never logged.
  */
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -53,7 +57,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        final String jwt = authHeader.substring(BEARER_PREFIX.length());
+        final String jwt = authHeader.substring(BEARER_PREFIX.length()).trim();
+        if (jwt.isEmpty()) {
+            filterChain.doFilter(request, response);
+            return;
+        }
 
         try {
             final String username = jwtTokenProvider.extractUsername(jwt);
@@ -70,11 +78,23 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                             );
                     authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authToken);
-                    log.debug("Authenticated user '{}' via JWT", username);
+
+                    UUID userId = jwtTokenProvider.extractUserId(jwt);
+                    if (userId != null) {
+                        MDC.put(RequestCorrelationFilter.MDC_USER_ID, userId.toString());
+                        VoiceOsRequestContext current = VoiceOsRequestContext.current();
+                        if (current != null) {
+                            VoiceOsRequestContext.set(current.withUserId(userId));
+                        }
+                    }
+                    log.debug("Authenticated user via JWT");
+                } else {
+                    log.debug("JWT rejected for {}", request.getRequestURI());
                 }
             }
         } catch (Exception e) {
-            log.debug("JWT authentication failed for request to {}: {}", request.getRequestURI(), e.getMessage());
+            log.debug("JWT authentication failed for request to {}: {}",
+                    request.getRequestURI(), e.getClass().getSimpleName());
         }
 
         filterChain.doFilter(request, response);
@@ -82,9 +102,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        // Skip JWT filter for public endpoints
         String path = request.getServletPath();
         return path.startsWith("/api/v1/auth/")
+                || path.startsWith("/api/webhooks/")
+                || path.startsWith("/api/v1/webhooks/")
                 || path.startsWith("/actuator/health")
                 || path.startsWith("/swagger-ui")
                 || path.startsWith("/api-docs")

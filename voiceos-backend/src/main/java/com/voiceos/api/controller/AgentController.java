@@ -1,50 +1,54 @@
 package com.voiceos.api.controller;
 
-import com.voiceos.agent.core.Agent;
+import com.voiceos.action.engine.ActionEngine;
+import com.voiceos.action.model.ActionCommand;
+import com.voiceos.action.model.ActionExecutionResult;
 import com.voiceos.agent.core.AgentRegistry;
 import com.voiceos.domain.entity.Conversation;
 import com.voiceos.domain.entity.User;
 import com.voiceos.domain.repository.ConversationRepository;
-import com.voiceos.domain.repository.UserRepository;
 import com.voiceos.exception.VoiceOsException;
-import com.voiceos.orchestrator.OrchestratorService;
+import com.voiceos.security.AuthenticatedUserService;
+import com.voiceos.security.VoiceOsRequestContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * REST API for Agent Execution and Agent Catalog.
+ * REST API for Agent catalog and execution through the canonical ActionEngine.
  */
 @RestController
 @RequestMapping("/api/v1/agent")
-@Tag(name = "Agent Execution", description = "Execute instructions via multi-agent orchestrator")
+@Tag(name = "Agent Execution", description = "Execute instructions via ActionEngine")
 @SecurityRequirement(name = "bearerAuth")
 public class AgentController {
 
-    private final OrchestratorService orchestratorService;
+    private final ActionEngine actionEngine;
     private final AgentRegistry agentRegistry;
     private final ConversationRepository conversationRepository;
-    private final UserRepository userRepository;
+    private final AuthenticatedUserService authenticatedUserService;
 
     public AgentController(
-            OrchestratorService orchestratorService,
+            ActionEngine actionEngine,
             AgentRegistry agentRegistry,
             ConversationRepository conversationRepository,
-            UserRepository userRepository
+            AuthenticatedUserService authenticatedUserService
     ) {
-        this.orchestratorService = orchestratorService;
+        this.actionEngine = actionEngine;
         this.agentRegistry = agentRegistry;
         this.conversationRepository = conversationRepository;
-        this.userRepository = userRepository;
+        this.authenticatedUserService = authenticatedUserService;
     }
 
     public record ExecuteRequest(
@@ -54,52 +58,43 @@ public class AgentController {
     ) {}
 
     @Operation(
-        summary = "Execute agent instruction",
-        description = "Processes user instruction through the Orchestrator, delegating to specialized agents and executing tools."
+            summary = "Execute agent instruction",
+            description = "Processes user instruction through ActionEngine → PolicyEngine → Agent → Tool → Provider → Verification."
     )
     @PostMapping("/execute")
-    public ResponseEntity<OrchestratorService.OrchestrationResult> execute(
-            @RequestBody ExecuteRequest request,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        User user = getUser(userDetails);
+    public ResponseEntity<ActionExecutionResult> execute(@RequestBody ExecuteRequest request) {
+        User user = authenticatedUserService.requireUser();
 
-        // Auto-create conversation if none provided
         UUID convId = request.conversationId();
         if (convId == null) {
             Conversation conv = new Conversation(user, request.input());
             conv = conversationRepository.save(conv);
             convId = conv.getId();
+        } else {
+            conversationRepository.findByIdAndUserId(convId, user.getId())
+                    .orElseThrow(() -> VoiceOsException.forbidden(
+                            "Conversation does not belong to the authenticated user"));
         }
 
-        OrchestratorService.OrchestrationResult result = orchestratorService.processUserRequest(
-                convId, user.getId(), request.input()
+        ActionCommand command = new ActionCommand(
+                user.getId(),
+                convId,
+                null,
+                VoiceOsRequestContext.currentRequestId(),
+                null,
+                null,
+                "HTTP",
+                request.input(),
+                null,
+                Map.of()
         );
-
-        return ResponseEntity.ok(result);
+        return ResponseEntity.ok(actionEngine.execute(command));
     }
 
     @Operation(summary = "List all available AI agents")
     @GetMapping("/catalog")
     public ResponseEntity<List<Map<String, Object>>> listAgents() {
-        List<Map<String, Object>> catalog = agentRegistry.getAllAgents().stream()
-                .map(a -> Map.<String, Object>of(
-                        "name", a.getName(),
-                        "description", a.getDescription(),
-                        "priority", a.getPriority(),
-                        "toolsCount", a.getTools().size()
-                ))
-                .toList();
-
-        return ResponseEntity.ok(catalog);
-    }
-
-    private User getUser(UserDetails userDetails) {
-        if (userDetails == null) {
-            return userRepository.findAll().stream().findFirst()
-                    .orElseThrow(() -> VoiceOsException.badRequest("User not found"));
-        }
-        return userRepository.findByEmail(userDetails.getUsername())
-                .orElseThrow(() -> VoiceOsException.notFound("User", userDetails.getUsername()));
+        authenticatedUserService.requireUser();
+        return ResponseEntity.ok(agentRegistry.catalog());
     }
 }

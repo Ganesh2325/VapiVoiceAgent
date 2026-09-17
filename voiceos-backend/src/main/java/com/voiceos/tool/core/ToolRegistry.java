@@ -67,11 +67,15 @@ public class ToolRegistry {
                 // In a production environment, this should ideally be wrapped in a Future with timeout enforcement.
                 ToolResult result = tool.execute(params);
                 long latencyMs = System.currentTimeMillis() - startMs;
-                
-                if (latencyMs > timeoutMs) {
-                    log.warn("Tool '{}' execution exceeded timeout of {}ms (took {}ms)", toolName, timeoutMs, latencyMs);
+                if (result.success() && (latencyMs > timeoutMs || result.durationMs() > timeoutMs)) {
+                    log.warn("Tool '{}' exceeded timeout of {}ms (took {}ms / reported {}ms)",
+                            toolName, timeoutMs, latencyMs, result.durationMs());
+                    return ToolResult.failure(
+                            result.data(),
+                            "TIMEOUT: execution exceeded " + timeoutMs + "ms",
+                            Math.max(latencyMs, result.durationMs())
+                    );
                 }
-                
                 log.info("Tool '{}' executed in {}ms on attempt {}/{} (success={})", toolName, latencyMs, attempt, maxRetries, result.success());
                 return result;
             } catch (Exception e) {

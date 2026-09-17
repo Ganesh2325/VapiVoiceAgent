@@ -1,5 +1,7 @@
 package com.voiceos.config;
 
+import com.voiceos.provider.ProviderBinding;
+
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.List;
@@ -17,8 +19,15 @@ public record VoiceOsProperties(
         WebhooksProperties webhooks,
         IntegrationsProperties integrations,
         RagProperties rag,
-        AgentsProperties agents
+        AgentsProperties agents,
+        ProvidersProperties providers
 ) {
+
+    public VoiceOsProperties {
+        if (providers == null) {
+            providers = ProvidersProperties.defaults();
+        }
+    }
 
     public record AiProperties(
             String provider,
@@ -68,8 +77,27 @@ public record VoiceOsProperties(
     public record WebhooksProperties(
             String vapiSecret,
             String githubSecret,
-            String calendarSecret
-    ) {}
+            String calendarSecret,
+            Boolean requireSecret,
+            Boolean allowInsecureLocal
+    ) {
+        public WebhooksProperties {
+            if (requireSecret == null) {
+                requireSecret = Boolean.TRUE;
+            }
+            if (allowInsecureLocal == null) {
+                allowInsecureLocal = Boolean.FALSE;
+            }
+        }
+
+        public boolean secretRequired() {
+            return requireSecret == null || requireSecret;
+        }
+
+        public boolean insecureLocalAllowed() {
+            return Boolean.TRUE.equals(allowInsecureLocal);
+        }
+    }
 
     public record IntegrationsProperties(
             GithubProperties github,
@@ -95,4 +123,49 @@ public record VoiceOsProperties(
             long executionTimeoutMs,
             int maxRetries
     ) {}
+
+    /**
+     * Explicit provider bindings. Missing credentials never cause a silent MOCK fallback
+     * when mode is REAL.
+     */
+    public record ProvidersProperties(
+            ProviderBinding calculator,
+            ProviderBinding travel,
+            ProviderBinding whatsapp,
+            ProviderBinding email,
+            ProviderBinding calendar,
+            ProviderBinding payment
+    ) {
+        public static ProvidersProperties defaults() {
+            return new ProvidersProperties(
+                    ProviderBinding.realDefault(),
+                    ProviderBinding.mockDefault(),
+                    ProviderBinding.mockDefault(),
+                    ProviderBinding.mockDefault(),
+                    ProviderBinding.mockDefault(),
+                    ProviderBinding.mockDefault()
+            );
+        }
+
+        public ProvidersProperties {
+            if (calculator == null) {
+                calculator = ProviderBinding.realDefault();
+            }
+            if (travel == null) {
+                travel = ProviderBinding.mockDefault();
+            }
+            if (whatsapp == null) {
+                whatsapp = ProviderBinding.mockDefault();
+            }
+            if (email == null) {
+                email = ProviderBinding.mockDefault();
+            }
+            if (calendar == null) {
+                calendar = ProviderBinding.mockDefault();
+            }
+            if (payment == null) {
+                payment = ProviderBinding.mockDefault();
+            }
+        }
+    }
 }

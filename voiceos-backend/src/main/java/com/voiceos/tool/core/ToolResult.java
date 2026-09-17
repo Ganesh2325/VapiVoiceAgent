@@ -30,4 +30,8 @@ public record ToolResult(
     public static ToolResult failure(String errorMessage, long durationMs) {
         return new ToolResult(false, Map.of(), null, errorMessage, durationMs);
     }
+
+    public static ToolResult failure(Map<String, Object> data, String errorMessage, long durationMs) {
+        return new ToolResult(false, data != null ? data : Map.of(), null, errorMessage, durationMs);
+    }
 }

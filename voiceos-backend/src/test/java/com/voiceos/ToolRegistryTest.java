@@ -21,7 +21,7 @@ class ToolRegistryTest {
 
     @BeforeEach
     void setUp() {
-        calculatorTool = new CalculatorTool();
+        calculatorTool = new CalculatorTool(new com.voiceos.provider.calculator.RealLocalCalculatorProvider());
         searchTool = new SearchTool();
         toolRegistry = new ToolRegistry(List.of(calculatorTool, searchTool));
     }
@@ -45,6 +45,32 @@ class ToolRegistryTest {
     }
 
     @Test
+    void testCalculatorMultiplication() {
+        ToolResult result = toolRegistry.executeTool("calculator", Map.of(
+                "expression", "25 * 4"
+        ));
+        assertTrue(result.success());
+        assertEquals("100.00", result.rawOutput());
+    }
+
+    @Test
+    void testCalculatorMissingExpressionFailsValidation() {
+        ToolResult result = toolRegistry.executeTool("calculator", Map.of());
+        assertFalse(result.success());
+        assertTrue(result.errorMessage().contains("Invalid tool input"));
+    }
+
+    @Test
+    void testCalculatorNonNumericExpressionFailsHonestly() {
+        ToolResult result = toolRegistry.executeTool("calculator", Map.of(
+                "expression", "not-a-number"
+        ));
+        assertFalse(result.success());
+        assertTrue(result.errorMessage() != null && result.errorMessage().contains("INVALID_REQUEST"));
+        assertNotEquals("0.00", result.rawOutput());
+    }
+
+    @Test
     void testSearchExecution() {
         ToolResult result = toolRegistry.executeTool("search_web", Map.of(
                 "query", "Bangalore flights and hotels"
@@ -59,6 +85,24 @@ class ToolRegistryTest {
     void testRiskClassification() {
         assertEquals(Tool.ToolRiskLevel.LOW, calculatorTool.getRiskLevel());
         assertFalse(calculatorTool.getRiskLevel().requiresHumanApproval());
+    }
+
+    @Test
+    void timeoutReportedDurationIsFailure() {
+        Tool slow = new Tool() {
+            @Override public String getName() { return "slow_probe"; }
+            @Override public String getDescription() { return "timeout probe"; }
+            @Override public ToolRiskLevel getRiskLevel() { return ToolRiskLevel.LOW; }
+            @Override public long getTimeoutMs() { return 5; }
+            @Override public int getMaxRetries() { return 1; }
+            @Override public ToolResult execute(Map<String, Object> params) {
+                return ToolResult.success("should-not-count", 50);
+            }
+        };
+        ToolRegistry registry = new ToolRegistry(List.of(slow));
+        ToolResult result = registry.executeTool("slow_probe", Map.of());
+        assertFalse(result.success());
+        assertTrue(result.errorMessage().contains("TIMEOUT"));
     }
 
     @Test

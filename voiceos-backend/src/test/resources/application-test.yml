@@ -1,0 +1,83 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  flyway:
+    enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+  ai:
+    vertex:
+      ai:
+        gemini:
+          project-id: voiceos-test
+          location: us-central1
+          chat:
+            enabled: false
+    openai:
+      api-key: test-openai-key-for-unit-tests
+      chat:
+        enabled: false
+      embedding:
+        enabled: false
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+      - org.springframework.ai.vectorstore.qdrant.autoconfigure.QdrantVectorStoreAutoConfiguration
+
+voiceos:
+  jwt:
+    secret: test_secret_key_that_is_at_least_64_characters_long_for_testing_purposes_only
+    expiration-ms: 86400000
+    refresh-expiration-ms: 604800000
+  ai:
+    provider: gemini
+    mock: true
+  voice:
+    provider: vapi
+    vapi:
+      api-key: test-vapi-key
+      assistant-id: test-ast-id
+      webhook-secret: test-secret
+      public-key: test-pk
+      base-url: https://api.vapi.ai
+  security:
+    cors:
+      allowed-origins: http://localhost:3000
+    rate-limit:
+      enabled: false
+      requests-per-minute: 60
+  agents:
+    execution-timeout-ms: 30000
+    max-retries: 2
+  rag:
+    chunk-size: 500
+    chunk-overlap: 50
+    top-k: 5
+  webhooks:
+    vapi-secret: test-secret
+    github-secret:
+    calendar-secret:
+    require-secret: true
+    allow-insecure-local: false
+  integrations:
+    github:
+      token:
+    smtp:
+      host: localhost
+      port: 587
+      username:
+      password:

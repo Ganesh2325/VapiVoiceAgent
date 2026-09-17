@@ -5,8 +5,8 @@ import com.voiceos.domain.entity.Message;
 import com.voiceos.domain.entity.User;
 import com.voiceos.domain.repository.ConversationRepository;
 import com.voiceos.domain.repository.MessageRepository;
-import com.voiceos.domain.repository.UserRepository;
 import com.voiceos.exception.VoiceOsException;
+import com.voiceos.security.AuthenticatedUserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -14,8 +14,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -33,25 +31,24 @@ public class ConversationController {
 
     private final ConversationRepository conversationRepository;
     private final MessageRepository messageRepository;
-    private final UserRepository userRepository;
+    private final AuthenticatedUserService authenticatedUserService;
 
     public ConversationController(
             ConversationRepository conversationRepository,
             MessageRepository messageRepository,
-            UserRepository userRepository
+            AuthenticatedUserService authenticatedUserService
     ) {
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
-        this.userRepository = userRepository;
+        this.authenticatedUserService = authenticatedUserService;
     }
 
     @Operation(summary = "Start a new conversation")
     @PostMapping
     public ResponseEntity<Map<String, Object>> createConversation(
-            @RequestBody(required = false) Map<String, String> body,
-            @AuthenticationPrincipal UserDetails userDetails
+            @RequestBody(required = false) Map<String, String> body
     ) {
-        User user = getUser(userDetails);
+        User user = authenticatedUserService.requireUser();
         String title = (body != null && body.containsKey("title")) ? body.get("title") : "New Conversation";
 
         Conversation conversation = new Conversation(user, title);
@@ -69,10 +66,9 @@ public class ConversationController {
     @GetMapping
     public ResponseEntity<List<Map<String, Object>>> listConversations(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
-            @AuthenticationPrincipal UserDetails userDetails
+            @RequestParam(defaultValue = "20") int size
     ) {
-        User user = getUser(userDetails);
+        User user = authenticatedUserService.requireUser();
         Page<Conversation> conversations = conversationRepository.findByUserIdOrderByUpdatedAtDesc(
                 user.getId(), PageRequest.of(page, size)
         );
@@ -93,11 +89,8 @@ public class ConversationController {
 
     @Operation(summary = "Get conversation details and messages")
     @GetMapping("/{id}")
-    public ResponseEntity<Map<String, Object>> getConversation(
-            @PathVariable UUID id,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        User user = getUser(userDetails);
+    public ResponseEntity<Map<String, Object>> getConversation(@PathVariable UUID id) {
+        User user = authenticatedUserService.requireUser();
         Conversation conversation = conversationRepository.findByIdAndUserId(id, user.getId())
                 .orElseThrow(() -> VoiceOsException.notFound("Conversation", id));
 
@@ -121,14 +114,5 @@ public class ConversationController {
                 "messageCount", conversation.getMessageCount(),
                 "messages", messageDtos
         ));
-    }
-
-    private User getUser(UserDetails userDetails) {
-        if (userDetails == null) {
-            return userRepository.findAll().stream().findFirst()
-                    .orElseThrow(() -> VoiceOsException.badRequest("User not found"));
-        }
-        return userRepository.findByEmail(userDetails.getUsername())
-                .orElseThrow(() -> VoiceOsException.notFound("User", userDetails.getUsername()));
     }
 }

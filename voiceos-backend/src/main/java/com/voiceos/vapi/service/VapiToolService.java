@@ -1,56 +1,47 @@
 package com.voiceos.vapi.service;
 
-import com.voiceos.agent.core.AgentContext;
-import com.voiceos.agent.core.AgentRegistry;
-import com.voiceos.agent.core.AgentResult;
-import com.voiceos.domain.entity.Approval;
-import com.voiceos.domain.repository.ApprovalRepository;
-import com.voiceos.orchestrator.OrchestratorService;
-import com.voiceos.tool.core.Tool;
-import com.voiceos.tool.core.ToolRegistry;
-import com.voiceos.tool.core.ToolResult;
-import com.voiceos.vapi.dto.VapiWebhookDTOs.*;
+import com.voiceos.action.engine.ActionEngine;
+import com.voiceos.action.model.ActionCommand;
+import com.voiceos.action.model.ActionExecutionResult;
+import com.voiceos.security.VoiceOsRequestContext;
+import com.voiceos.service.VoiceSessionService;
+import com.voiceos.vapi.dto.VapiWebhookDTOs.VapiCall;
+import com.voiceos.vapi.dto.VapiWebhookDTOs.VapiFunction;
+import com.voiceos.vapi.dto.VapiWebhookDTOs.VapiMessage;
+import com.voiceos.vapi.dto.VapiWebhookDTOs.VapiToolCall;
+import com.voiceos.vapi.dto.VapiWebhookDTOs.VapiToolCallResponse;
+import com.voiceos.vapi.dto.VapiWebhookDTOs.VapiToolResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /**
- * Service responsible for executing tool calls requested by the Vapi Voice Agent.
- * Connects Vapi directly to Spring Boot's multi-agent orchestrator, domain agents,
- * and deterministic tools.
+ * Maps Vapi tool-calls onto the canonical ActionEngine pipeline.
+ * Does not execute tools directly.
  */
 @Service
 public class VapiToolService {
 
     private static final Logger log = LoggerFactory.getLogger(VapiToolService.class);
 
-    private final ToolRegistry toolRegistry;
-    private final AgentRegistry agentRegistry;
-    private final OrchestratorService orchestratorService;
-    private final ApprovalRepository approvalRepository;
+    private final ActionEngine actionEngine;
+    private final VoiceSessionService voiceSessionService;
 
-    public VapiToolService(
-            ToolRegistry toolRegistry,
-            AgentRegistry agentRegistry,
-            OrchestratorService orchestratorService,
-            ApprovalRepository approvalRepository
-    ) {
-        this.toolRegistry = toolRegistry;
-        this.agentRegistry = agentRegistry;
-        this.orchestratorService = orchestratorService;
-        this.approvalRepository = approvalRepository;
+    public VapiToolService(ActionEngine actionEngine, VoiceSessionService voiceSessionService) {
+        this.actionEngine = actionEngine;
+        this.voiceSessionService = voiceSessionService;
     }
 
-    /**
-     * Executes all tool calls in the Vapi payload and returns formatted results for voice synthesis.
-     */
     public VapiToolCallResponse handleToolCalls(VapiMessage message, VapiCall call) {
         List<VapiToolCall> calls = message.toolCalls() != null ? message.toolCalls() : message.toolCallList();
         if (calls == null || calls.isEmpty()) {
             if (message.functionCall() != null) {
-                // Fallback for single function call
                 calls = List.of(new VapiToolCall("single-call", "function", message.functionCall()));
             } else {
                 return VapiToolCallResponse.of(List.of());
@@ -59,10 +50,8 @@ public class VapiToolService {
 
         List<VapiToolResult> results = new ArrayList<>();
         for (VapiToolCall toolCall : calls) {
-            VapiToolResult result = executeSingleToolCall(toolCall, call);
-            results.add(result);
+            results.add(executeSingleToolCall(toolCall, call));
         }
-
         return VapiToolCallResponse.of(results);
     }
 
@@ -74,106 +63,76 @@ public class VapiToolService {
         }
 
         String functionName = func.name().toLowerCase().trim();
-        Map<String, Object> args = func.arguments() != null ? func.arguments() : Map.of();
-        log.info("Executing Vapi Tool Call: '{}' with arguments: {}", functionName, args);
+        Map<String, Object> args = func.arguments() != null ? new HashMap<>(func.arguments()) : new HashMap<>();
+        String vapiCallId = call != null ? call.id() : null;
 
-        try {
-            // Case 1: Universal Orchestrator Execution Tool
-            if (functionName.equals("execute_agent_action") || functionName.equals("voiceos_orchestrator")) {
-                String input = (String) args.getOrDefault("input", (String) args.get("query"));
-                if (input == null || input.isBlank()) {
-                    return VapiToolResult.error(callId, functionName, "Please provide an instruction or input for the agent.");
-                }
+        UUID userId = voiceSessionService.resolveBoundUserId(vapiCallId).orElse(null);
+        UUID conversationId = voiceSessionService.resolveConversationId(vapiCallId).orElse(null);
 
-                UUID convId = parseConversationId(call);
-                var orchestratorResult = orchestratorService.execute(convId, input);
+        String requestedTool = requestedToolName(functionName);
+        String operation = operationText(functionName, args);
 
-                String voiceResponse = orchestratorResult.responseText();
-                if (orchestratorResult.awaitingApproval()) {
-                    voiceResponse = "I have prepared this action. Because it is a high-risk operation, please confirm if you would like me to proceed.";
-                }
-                return VapiToolResult.success(callId, functionName, voiceResponse);
-            }
+        ActionCommand command = new ActionCommand(
+                userId,
+                conversationId,
+                vapiCallId,
+                VoiceOsRequestContext.currentRequestId(),
+                VoiceOsRequestContext.current() != null ? VoiceOsRequestContext.current().eventId() : null,
+                actionIdempotencyKey(vapiCallId, callId),
+                "VAPI",
+                operation,
+                requestedTool,
+                args
+        );
 
-            // Case 2: Specialized Agent Routing by Name
-            if (functionName.startsWith("agent_") || functionName.endsWith("_agent")) {
-                String normalizedAgentName = functionName.replace("agent_", "").replace("_agent", "");
-                String input = (String) args.getOrDefault("input", (String) args.get("query"));
+        log.info("Vapi tool-call routed to ActionEngine function={} callId={} toolCallId={} userBound={}",
+                functionName, vapiCallId, callId, userId != null);
 
-                UUID convId = parseConversationId(call);
-                AgentContext ctx = AgentContext.of(convId, null, input != null ? input : "Execute standard agent task");
-
-                for (var agent : agentRegistry.getAllAgents()) {
-                    if (agent.getName().toLowerCase().contains(normalizedAgentName)) {
-                        AgentResult agentResult = agent.execute(ctx);
-                        return VapiToolResult.success(callId, functionName, agentResult.responseText());
-                    }
-                }
-            }
-
-            // Case 3: Direct Deterministic Tool in ToolRegistry
-            Optional<Tool> optionalTool = toolRegistry.getTool(functionName);
-            if (optionalTool.isPresent()) {
-                Tool tool = optionalTool.get();
-
-                // Check Human-in-the-Loop Risk Filter
-                if (tool.getRiskLevel().requiresHumanApproval()) {
-                    // Check if confirmation was explicitly passed
-                    boolean confirmed = Boolean.parseBoolean(String.valueOf(args.getOrDefault("confirmed", "false")));
-                    if (!confirmed) {
-                        // Register approval request in database
-                        Approval approval = new Approval();
-                        approval.setActionType(functionName.toUpperCase());
-                        approval.setActionDescription("Vapi Voice Agent requested: " + functionName + " with params: " + args);
-                        approval.setPayload(args);
-                        approval.setRiskLevel(com.voiceos.domain.entity.ToolExecution.RiskLevel.HIGH);
-                        approval.setStatus(Approval.ApprovalStatus.PENDING);
-                        approvalRepository.save(approval);
-
-                        return VapiToolResult.success(
-                                callId,
-                                functionName,
-                                "I have prepared this action, but it involves sensitive operations. Would you like me to approve and proceed?"
-                        );
-                    }
-                }
-
-                // Execute deterministic tool
-                ToolResult result = tool.execute(args);
-                if (result.success()) {
-                    String voiceOutput = formatToolOutputForVoice(functionName, result);
-                    return VapiToolResult.success(callId, functionName, voiceOutput);
-                } else {
-                    return VapiToolResult.error(callId, functionName, "Tool execution failed: " + result.errorMessage());
-                }
-            }
-
-            // Unknown tool fallback
-            log.warn("Unknown tool name requested by Vapi: {}", functionName);
-            return VapiToolResult.error(callId, functionName, "Tool '" + functionName + "' is not registered in VoiceOS.");
-
-        } catch (Exception e) {
-            log.error("Exception executing Vapi tool call '{}': {}", functionName, e.getMessage(), e);
-            return VapiToolResult.error(callId, functionName, "Error executing tool: " + e.getMessage());
-        }
+        ActionExecutionResult result = actionEngine.execute(command);
+        return toVapiResult(callId, functionName, result);
     }
 
-    private String formatToolOutputForVoice(String toolName, ToolResult result) {
-        if (result.rawOutput() != null && !result.rawOutput().isBlank()) {
-            return result.rawOutput();
+    private static VapiToolResult toVapiResult(String toolCallId, String functionName, ActionExecutionResult result) {
+        if (result.awaitingApproval()) {
+            return VapiToolResult.success(
+                    toolCallId,
+                    functionName,
+                    "This action requires approval before it can run. Status: REQUIRES_APPROVAL."
+            );
         }
-        if (result.data() != null && !result.data().isEmpty()) {
-            return "Operation completed successfully: " + result.data().toString();
+        if (!result.success()) {
+            String error = result.error() != null ? result.error() : "Action failed with status " + result.status();
+            return VapiToolResult.error(toolCallId, functionName, error);
         }
-        return "The requested action was completed successfully.";
+        String voice = result.responseText() != null ? result.responseText() : result.result();
+        return VapiToolResult.success(toolCallId, functionName, voice);
     }
 
-    private UUID parseConversationId(VapiCall call) {
-        if (call != null && call.id() != null) {
-            try {
-                return UUID.nameUUIDFromBytes(call.id().getBytes());
-            } catch (Exception ignored) {}
+    private static String requestedToolName(String functionName) {
+        if (functionName.equals("execute_agent_action") || functionName.equals("voiceos_orchestrator")) {
+            return null;
         }
-        return UUID.randomUUID();
+        if (functionName.startsWith("agent_") || functionName.endsWith("_agent")) {
+            return null;
+        }
+        return functionName;
+    }
+
+    private static String operationText(String functionName, Map<String, Object> args) {
+        Object input = args.get("input");
+        if (input == null) {
+            input = args.get("query");
+        }
+        if (input == null) {
+            input = args.get("expression");
+        }
+        if (input != null) {
+            return String.valueOf(input);
+        }
+        return functionName;
+    }
+
+    private static String actionIdempotencyKey(String vapiCallId, String toolCallId) {
+        return "action:vapi:" + (vapiCallId != null ? vapiCallId : "none") + ":" + toolCallId;
     }
 }

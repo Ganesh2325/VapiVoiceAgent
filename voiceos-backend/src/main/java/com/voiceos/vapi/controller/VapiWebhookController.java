@@ -1,7 +1,10 @@
 package com.voiceos.vapi.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.voiceos.exception.VoiceOsException;
+import com.voiceos.security.VoiceOsRequestContext;
 import com.voiceos.vapi.dto.VapiWebhookDTOs.VapiWebhookPayload;
+import com.voiceos.vapi.service.VapiWebhookSecurityService;
 import com.voiceos.vapi.service.VapiWebhookService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -30,10 +33,14 @@ public class VapiWebhookController {
     private static final Logger log = LoggerFactory.getLogger(VapiWebhookController.class);
 
     private final VapiWebhookService vapiWebhookService;
+    private final VapiWebhookSecurityService vapiWebhookSecurityService;
     private final ObjectMapper objectMapper;
 
-    public VapiWebhookController(VapiWebhookService vapiWebhookService, ObjectMapper objectMapper) {
+    public VapiWebhookController(VapiWebhookService vapiWebhookService,
+                                 VapiWebhookSecurityService vapiWebhookSecurityService,
+                                 ObjectMapper objectMapper) {
         this.vapiWebhookService = vapiWebhookService;
+        this.vapiWebhookSecurityService = vapiWebhookSecurityService;
         this.objectMapper = objectMapper;
     }
 
@@ -43,22 +50,23 @@ public class VapiWebhookController {
             @RequestHeader(value = "x-vapi-secret", required = false) String secretHeader,
             @RequestBody String rawPayload
     ) {
-        log.debug("Received incoming Vapi webhook request. Length: {} chars", rawPayload.length());
+        log.debug("Received incoming Vapi webhook request. Length: {} chars requestId={}",
+                rawPayload != null ? rawPayload.length() : 0,
+                VoiceOsRequestContext.currentRequestId());
 
-        // Validate secret
-        if (!vapiWebhookService.validateSecret(secretHeader)) {
-            log.warn("Unauthorized Vapi webhook call: invalid or missing x-vapi-secret header.");
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Invalid x-vapi-secret"));
-        }
+        vapiWebhookSecurityService.verify(secretHeader);
 
         try {
             VapiWebhookPayload payload = objectMapper.readValue(rawPayload, VapiWebhookPayload.class);
             Object response = vapiWebhookService.processWebhook(payload, rawPayload);
             return ResponseEntity.ok(response);
+        } catch (VoiceOsException e) {
+            throw e;
         } catch (Exception e) {
-            log.error("Error processing Vapi webhook payload: {}", e.getMessage(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", "Failed to process webhook: " + e.getMessage()));
+            log.error("Error processing Vapi webhook payload: {} requestId={}",
+                    e.getClass().getSimpleName(), VoiceOsRequestContext.currentRequestId());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", "Invalid Vapi webhook payload"));
         }
     }
 

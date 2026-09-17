@@ -1,9 +1,47 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Cpu, Sparkles, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { getStoredUser, login, logout, register } from '../services/api';
 
 export default function Header({ isCallActive, pendingApprovalsCount }) {
   const navigate = useNavigate();
+  const [user, setUser] = useState(getStoredUser());
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  useEffect(() => {
+    const refresh = () => setUser(getStoredUser());
+    window.addEventListener('voiceos:auth-changed', refresh);
+    window.addEventListener('voiceos:unauthorized', refresh);
+    return () => {
+      window.removeEventListener('voiceos:auth-changed', refresh);
+      window.removeEventListener('voiceos:unauthorized', refresh);
+    };
+  }, []);
+
+  const handleLogin = async () => {
+    setAuthError('');
+    try {
+      await login(email, password);
+      setPassword('');
+      setUser(getStoredUser());
+    } catch (err) {
+      setAuthError(err.message || 'Login failed');
+    }
+  };
+
+  const handleRegister = async () => {
+    setAuthError('');
+    try {
+      await register(email.split('@')[0] || 'VoiceOS User', email, password);
+      setPassword('');
+      setUser(getStoredUser());
+    } catch (err) {
+      setAuthError(err.message || 'Registration failed');
+    }
+  };
+
   return (
     <header style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -50,6 +88,33 @@ export default function Header({ isCallActive, pendingApprovalsCount }) {
           >
             <AlertTriangle size={14} /> {pendingApprovalsCount} Approval Required
           </button>
+        )}
+
+        {user ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{user.email}</span>
+            <button className="btn" style={{ padding: '6px 10px', fontSize: '0.75rem' }} onClick={logout}>Logout</button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <input
+              type="email"
+              placeholder="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={{ width: '150px', padding: '6px 8px', fontSize: '0.75rem' }}
+            />
+            <input
+              type="password"
+              placeholder="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={{ width: '120px', padding: '6px 8px', fontSize: '0.75rem' }}
+            />
+            <button className="btn btn-primary" style={{ padding: '6px 10px', fontSize: '0.75rem' }} onClick={handleLogin}>Login</button>
+            <button className="btn" style={{ padding: '6px 10px', fontSize: '0.75rem' }} onClick={handleRegister}>Register</button>
+            {authError && <span style={{ color: '#f87171', fontSize: '0.7rem' }}>{authError}</span>}
+          </div>
         )}
       </div>
     </header>

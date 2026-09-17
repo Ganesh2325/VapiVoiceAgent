@@ -1,16 +1,19 @@
 package com.voiceos.agent.impl;
 
 import com.voiceos.agent.core.Agent;
+import com.voiceos.agent.core.AgentCapability;
 import com.voiceos.agent.core.AgentContext;
 import com.voiceos.agent.core.AgentResult;
 import com.voiceos.service.WorkflowService;
+import com.voiceos.tool.core.Tool;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Set;
 
 /**
- * Manages background workflows, recurring jobs, and cron scheduling.
+ * In-memory scheduler stub. WorkflowEngine is not implemented.
+ * This agent does not claim successful workflow execution.
  */
 @Component
 public class WorkflowAgent implements Agent {
@@ -22,28 +25,45 @@ public class WorkflowAgent implements Agent {
     }
 
     @Override
-    public String getName() { return "WorkflowAgent"; }
+    public String getName() {
+        return "WorkflowAgent";
+    }
 
     @Override
-    public String getDescription() { return "Schedules and manages automated background workflows."; }
+    public String getDescription() {
+        return "STUB: in-memory delayed callback scheduler. WorkflowEngine is not implemented.";
+    }
+
+    @Override
+    public boolean canHandle(AgentContext context) {
+        if (context == null || context.userInput() == null) {
+            return false;
+        }
+        String input = context.userInput().toLowerCase();
+        return input.contains("schedule workflow") || input.contains("background job");
+    }
+
+    @Override
+    public int getPriority() {
+        return 88;
+    }
+
+    @Override
+    public Set<AgentCapability> capabilities() {
+        return Set.of(AgentCapability.WORKFLOW);
+    }
 
     @Override
     public AgentResult execute(AgentContext context) {
-        // Simple heuristic for MVP scheduling
-        String input = context.userInput().toLowerCase();
-        int minutesDelay = 5; // Default
+        long startMs = System.currentTimeMillis();
+        return AgentResult.notImplemented(getName(),
+                "NOT_IMPLEMENTED: WorkflowEngine is not implemented. No workflow steps, agents, or external actions were executed."
+                        + (workflowService != null ? "" : ""),
+                System.currentTimeMillis() - startMs);
+    }
 
-        if (input.contains("tomorrow")) {
-            minutesDelay = 24 * 60;
-        } else if (input.contains("hour")) {
-            minutesDelay = 60;
-        }
-
-        workflowService.scheduleTask(
-            () -> System.out.println("Executing scheduled workflow for user: " + context.userId()),
-            Instant.now().plus(minutesDelay, ChronoUnit.MINUTES)
-        );
-
-        return AgentResult.success("WorkflowAgent", "Workflow scheduled successfully for " + minutesDelay + " minutes from now.");
+    @Override
+    public List<Tool> getTools() {
+        return List.of();
     }
 }

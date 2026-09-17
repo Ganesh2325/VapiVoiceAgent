@@ -2,57 +2,76 @@ package com.voiceos.agent.core;
 
 import com.voiceos.tool.core.Tool;
 import java.util.List;
+import java.util.Set;
 
 /**
- * Core Agent interface for VoiceOS.
+ * Capability provider in the ActionEngine pipeline.
  *
- * <p>All specialized AI agents implement this interface:
- * <ul>
- *   <li>{@code getName()} — unique logical name of the agent</li>
- *   <li>{@code getDescription()} — system description used by Orchestrator to route intents</li>
- *   <li>{@code canHandle(context)} — deterministic / heuristic check before delegating to LLM</li>
- *   <li>{@code execute(context)} — main execution loop (tool calls, LLM reasoning, state updates)</li>
- *   <li>{@code getTools()} — tools available to this agent</li>
- * </ul>
+ * <p>Lower {@link #getPriority()} wins. Agents decide which logical tool is appropriate;
+ * PolicyEngine decides whether it is allowed. Agents must not instantiate providers
+ * or bypass ToolRegistry.
+ *
+ * <p>{@link #canHandle(AgentContext)} remains compatibility routing. New selection
+ * goes through {@link #canHandle(AgentRequest)}.
  */
 public interface Agent {
 
-    /**
-     * @return the unique name of the agent (e.g. "TravelAgent", "TaskAgent")
-     */
     String getName();
 
-    /**
-     * @return human and LLM-readable description of what this agent can do
-     */
     String getDescription();
 
-    /**
-     * Fast deterministic or keyword-based check to evaluate if this agent is relevant.
-     * Used by Orchestrator for low-latency intent routing.
-     *
-     * @param context the current agent execution context
-     * @return true if this agent can handle or contribute to the request
-     */
     boolean canHandle(AgentContext context);
 
-    /**
-     * Executes the agent's logic for the given context.
-     *
-     * @param context execution context including user input, state, memory, and tools
-     * @return structured agent result
-     */
     AgentResult execute(AgentContext context);
 
-    /**
-     * @return list of tools registered to this agent
-     */
     List<Tool> getTools();
 
     /**
-     * @return priority order when multiple agents can handle the same intent (lower = higher priority)
+     * Lower numeric value = higher priority.
      */
     default int getPriority() {
         return 100;
+    }
+
+    default Set<AgentCapability> capabilities() {
+        return Set.of();
+    }
+
+    default List<Tool> ownedTools() {
+        return getTools();
+    }
+
+    /**
+     * Structured routing. Default delegates to {@link #canHandle(AgentContext)}.
+     */
+    default boolean canHandle(AgentRequest request) {
+        if (request == null) {
+            return false;
+        }
+        if (request.requestedTool() != null && !request.requestedTool().isBlank() && ownsTool(request.requestedTool())) {
+            return true;
+        }
+        String input = request.rawUserInput() != null ? request.rawUserInput() : "";
+        AgentContext context = request.toContext();
+        return canHandle(new AgentContext(
+                context.conversationId(),
+                context.userId(),
+                input,
+                context.history(),
+                context.memories(),
+                context.stateVariables()
+        ));
+    }
+
+    default AgentResult execute(AgentRequest request) {
+        return execute(request != null ? request.toContext() : AgentContext.of(null, null, null));
+    }
+
+    default boolean ownsTool(String toolName) {
+        if (toolName == null || ownedTools() == null) {
+            return false;
+        }
+        return ownedTools().stream()
+                .anyMatch(tool -> tool != null && tool.getName() != null && tool.getName().equalsIgnoreCase(toolName));
     }
 }

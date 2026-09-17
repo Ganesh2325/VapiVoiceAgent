@@ -59,9 +59,15 @@ public class MemoryDeleteTool implements Tool {
             }
 
             if (deleted) {
-                return ToolResult.success(Map.of("deleted", true, "message", "Memory deleted successfully"), "Successfully forgot the requested memory.");
+                return ToolResult.success(
+                        Map.of("deleted", true, "message", "Memory deleted"),
+                        "Successfully forgot the requested memory.",
+                        0);
             } else {
-                return ToolResult.success(Map.of("deleted", false, "message", "No matching memory found"), "I couldn't find a memory matching that description to forget.");
+                return ToolResult.success(
+                        Map.of("deleted", false, "message", "No matching memory found"),
+                        "I couldn't find a memory matching that description to forget.",
+                        0);
             }
 
         } catch (Exception e) {

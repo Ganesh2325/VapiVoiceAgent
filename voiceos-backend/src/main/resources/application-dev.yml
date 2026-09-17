@@ -13,6 +13,9 @@ spring:
 voiceos:
   ai:
     mock: true     # Use mock AI responses in dev to save API quota
+  # JWT_SECRET and VAPI_WEBHOOK_SECRET must still be set in the environment.
+  # This profile does not inject fallback secrets. For local webhook testing
+  # without Vapi, set VAPI_WEBHOOK_ALLOW_INSECURE_LOCAL=true explicitly.
 
 logging:
   level:

@@ -1,7 +1,7 @@
 {
   "server": {
-    "url": "https://caption-cranial-senate.ngrok-free.dev/api/webhooks/vapi",
+    "url": "${VAPI_SERVER_URL}",
     "timeoutSeconds": 20,
-    "secret": "ganeshmaheshwaram"
+    "secret": "${VAPI_WEBHOOK_SECRET}"
   }
 }

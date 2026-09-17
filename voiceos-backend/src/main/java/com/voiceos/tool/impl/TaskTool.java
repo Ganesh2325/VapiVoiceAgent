@@ -96,11 +96,7 @@ public class TaskTool implements Tool {
             user = userRepository.findById(userId).orElse(null);
         }
         if (user == null) {
-            user = userRepository.findAll().stream().findFirst().orElse(null);
-        }
-
-        if (user == null) {
-            return ToolResult.failure("No valid user found to assign task.", System.currentTimeMillis() - startMs);
+            return ToolResult.failure("Authenticated userId is required to create a task.", System.currentTimeMillis() - startMs);
         }
 
         Task task = new Task(user, title, description, priority);
@@ -116,14 +112,10 @@ public class TaskTool implements Tool {
     }
 
     private ToolResult handleList(UUID userId, long startMs) {
-        List<Task> tasks;
-        if (userId != null) {
-            tasks = taskRepository.findByUserIdAndStatus(userId, Task.TaskStatus.PENDING);
-        } else {
-            tasks = taskRepository.findAll().stream()
-                    .filter(t -> t.getStatus() == Task.TaskStatus.PENDING)
-                    .toList();
+        if (userId == null) {
+            return ToolResult.failure("Authenticated userId is required to list tasks.", System.currentTimeMillis() - startMs);
         }
+        List<Task> tasks = taskRepository.findByUserIdAndStatus(userId, Task.TaskStatus.PENDING);
 
         List<Map<String, Object>> taskSummaries = tasks.stream()
                 .map(t -> Map.<String, Object>of(
@@ -149,8 +141,13 @@ public class TaskTool implements Tool {
         }
 
         UUID taskId = UUID.fromString(taskIdStr);
-        Task task = taskRepository.findById(taskId)
-                .orElseThrow(() -> new IllegalArgumentException("Task not found with ID: " + taskId));
+        Task task;
+        if (userId != null) {
+            task = taskRepository.findByIdAndUserId(taskId, userId)
+                    .orElseThrow(() -> new IllegalArgumentException("Task not found with ID: " + taskId));
+        } else {
+            return ToolResult.failure("Authenticated userId is required to complete a task.", System.currentTimeMillis() - startMs);
+        }
 
         task.complete();
         taskRepository.save(task);

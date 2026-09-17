@@ -36,7 +36,8 @@ public class VapiWebhookDTOs {
             @JsonProperty("durationSeconds") Double durationSeconds,
             @JsonProperty("cost") Double cost,
             @JsonProperty("analysis") Map<String, Object> analysis,
-            @JsonProperty("artifact") Map<String, Object> artifact
+            @JsonProperty("artifact") Map<String, Object> artifact,
+            @JsonProperty("id") String id
     ) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)

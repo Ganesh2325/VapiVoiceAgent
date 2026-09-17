@@ -1,17 +1,29 @@
 package com.voiceos.provider;
 
-import com.voiceos.action.model.Action;
+import java.util.Set;
 
 /**
- * Base abstraction for all external integrations.
+ * Base contract for VoiceOS business providers (calculator, travel, messaging, …).
+ * Implementations must declare {@link ProviderMode} explicitly and never claim
+ * REAL success for a simulated operation.
  */
 public interface ServiceProvider {
+
     String getName();
+
     String getDescription();
-    boolean supportsIntent(String intent);
-    
-    /**
-     * Executes the requested action after all policies and approvals are met.
-     */
-    void execute(Action action);
+
+    ProviderMode getMode();
+
+    Set<ProviderCapability> capabilities();
+
+    ProviderAvailability availability();
+
+    boolean supportsOperation(String operation);
+
+    ProviderResult execute(ProviderRequest request);
+
+    default boolean supportsIntent(String intent) {
+        return supportsOperation(intent);
+    }
 }

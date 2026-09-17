@@ -1,32 +1,42 @@
 package com.voiceos.agent.impl;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voiceos.agent.core.Agent;
+import com.voiceos.agent.core.AgentCapability;
 import com.voiceos.agent.core.AgentContext;
 import com.voiceos.agent.core.AgentResult;
 import com.voiceos.ai.LLMProvider;
 import com.voiceos.ai.LLMRequest;
 import com.voiceos.ai.LLMResponse;
-import com.voiceos.domain.entity.AgentPlan;
+import com.voiceos.tool.core.Tool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import java.util.Set;
 
 /**
  * PlannerAgent dynamically determines the optimal sequence of agent actions
  * required to fulfill a multi-step user request.
+ *
+ * <p>Invoked by {@code OrchestratorService} by name. It does not claim that a
+ * workflow executed — it only returns a plan JSON string or a failure.
  */
 @Component
 public class PlannerAgent implements Agent {
 
-    private final LLMProvider llmProvider;
-    private final ObjectMapper objectMapper;
+    private static final Logger log = LoggerFactory.getLogger(PlannerAgent.class);
 
-    public PlannerAgent(LLMProvider llmProvider, ObjectMapper objectMapper) {
+    private static final String SYSTEM_PROMPT = """
+            You are the PlannerAgent. Break down the user's request into a JSON array of steps.
+            Available agents: TravelAgent, TaskAgent, EmailAgent, FinanceAgent, ResearchAgent, CalendarAgent, MemoryAgent, DeveloperAgent, SupportAgent, ConversationAgent.
+            Output strictly a JSON array of objects with keys: 'agentName', 'action', 'description'.
+            """;
+
+    private final LLMProvider llmProvider;
+
+    public PlannerAgent(LLMProvider llmProvider) {
         this.llmProvider = llmProvider;
-        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -40,34 +50,64 @@ public class PlannerAgent implements Agent {
     }
 
     @Override
+    public boolean canHandle(AgentContext context) {
+        if (context == null || context.userInput() == null) {
+            return false;
+        }
+        String input = context.userInput().toLowerCase();
+        return input.contains("multi-step") || input.contains("break down") || input.contains("execution plan");
+    }
+
+    @Override
+    public int getPriority() {
+        return 90;
+    }
+
+    @Override
+    public Set<AgentCapability> capabilities() {
+        return Set.of(AgentCapability.PLANNING);
+    }
+
+    @Override
     public AgentResult execute(AgentContext context) {
-        String prompt = "You are the PlannerAgent. Break down the user's request into a JSON array of steps. " +
-                "Available agents: TravelAgent, TaskAgent, EmailAgent, FinanceAgent, ResearchAgent, CalendarAgent, MemoryAgent, DeveloperAgent, SupportAgent, ConversationAgent. " +
-                "Output strictly a JSON array of objects with keys: 'agentName', 'action', 'description'. " +
-                "User Request: " + context.userInput();
+        long startMs = System.currentTimeMillis();
+        String userInput = context != null && context.userInput() != null ? context.userInput() : "";
+        log.info("PlannerAgent generating plan for: '{}'", userInput);
 
         try {
-            LLMResponse response = llmProvider.generate(new LLMRequest(
-                    "gpt-4o",
-                    prompt,
-                    "system",
-                    0.0
-            ));
-
-            String json = response.text().trim();
+            LLMRequest request = LLMRequest.simple(SYSTEM_PROMPT, userInput);
+            LLMResponse response = llmProvider.chat(request);
+            String json = response.content() != null ? response.content().trim() : "";
             if (json.startsWith("```json")) {
-                json = json.substring(7, json.length() - 3).trim();
+                json = json.substring(7).trim();
+                if (json.endsWith("```")) {
+                    json = json.substring(0, json.length() - 3).trim();
+                }
+            } else if (json.startsWith("```")) {
+                json = json.substring(3).trim();
+                if (json.endsWith("```")) {
+                    json = json.substring(0, json.length() - 3).trim();
+                }
             }
 
-            // Fallback for empty/invalid
+            long latency = System.currentTimeMillis() - startMs;
             if (!json.startsWith("[")) {
-                return AgentResult.success("PlannerAgent", "Failed to generate plan. Sending to ConversationAgent.");
+                log.warn("PlannerAgent did not receive a JSON array plan");
+                return AgentResult.failure(getName(),
+                        "PLAN_NOT_GENERATED: model output was not a JSON array. Orchestrator should fall back.",
+                        latency);
             }
 
-            return AgentResult.success("PlannerAgent", json);
-            
+            return AgentResult.success(getName(), json, latency);
         } catch (Exception e) {
-            return AgentResult.failure("PlannerAgent", "Planning failed: " + e.getMessage());
+            long latency = System.currentTimeMillis() - startMs;
+            log.error("PlannerAgent failed: {}", e.getMessage());
+            return AgentResult.failure(getName(), "Planning failed: " + e.getMessage(), latency);
         }
+    }
+
+    @Override
+    public List<Tool> getTools() {
+        return List.of();
     }
 }

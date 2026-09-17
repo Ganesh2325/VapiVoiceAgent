@@ -1,12 +1,14 @@
 package com.voiceos.vapi.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.voiceos.config.VoiceOsProperties;
 import com.voiceos.domain.entity.WebhookEvent;
-import com.voiceos.domain.repository.WebhookEventRepository;
+import com.voiceos.security.RequestCorrelationFilter;
+import com.voiceos.security.VoiceOsRequestContext;
 import com.voiceos.vapi.dto.VapiWebhookDTOs.*;
+import com.voiceos.voice.VoiceConfiguration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -23,72 +25,111 @@ public class VapiWebhookService {
 
     private final VapiToolService vapiToolService;
     private final VapiEventProcessor vapiEventProcessor;
-    private final WebhookEventRepository webhookEventRepository;
-    private final VoiceOsProperties properties;
+    private final VapiWebhookSecurityService vapiWebhookSecurityService;
+    private final VapiIdempotencyService vapiIdempotencyService;
+    private final VapiIdempotencyKeyBuilder idempotencyKeyBuilder;
     private final ObjectMapper objectMapper;
     private final VoiceConfiguration voiceConfiguration;
 
     public VapiWebhookService(
             VapiToolService vapiToolService,
             VapiEventProcessor vapiEventProcessor,
-            WebhookEventRepository webhookEventRepository,
-            VoiceOsProperties properties,
+            VapiWebhookSecurityService vapiWebhookSecurityService,
+            VapiIdempotencyService vapiIdempotencyService,
+            VapiIdempotencyKeyBuilder idempotencyKeyBuilder,
             ObjectMapper objectMapper,
             VoiceConfiguration voiceConfiguration
     ) {
         this.vapiToolService = vapiToolService;
         this.vapiEventProcessor = vapiEventProcessor;
-        this.webhookEventRepository = webhookEventRepository;
-        this.properties = properties;
+        this.vapiWebhookSecurityService = vapiWebhookSecurityService;
+        this.vapiIdempotencyService = vapiIdempotencyService;
+        this.idempotencyKeyBuilder = idempotencyKeyBuilder;
         this.objectMapper = objectMapper;
         this.voiceConfiguration = voiceConfiguration;
     }
 
     /**
-     * Validates secret header from Vapi if a secret is configured.
+     * Validates secret header from Vapi. Fail-closed unless local insecure mode is explicit.
      */
     public boolean validateSecret(String secretHeader) {
-        String configuredSecret = properties.webhooks() != null ? properties.webhooks().vapiSecret() : null;
-        if (configuredSecret == null || configuredSecret.isBlank()) {
-            if (properties.voice() != null && properties.voice().vapi() != null) {
-                configuredSecret = properties.voice().vapi().webhookSecret();
-            }
-        }
-
-        // If no secret is configured in environment, allow requests (dev mode)
-        if (configuredSecret == null || configuredSecret.isBlank()) {
-            return true;
-        }
-
-        return configuredSecret.equals(secretHeader);
+        return vapiWebhookSecurityService.isValid(secretHeader);
     }
 
     /**
-     * Processes inbound Vapi webhook payload.
+     * Processes inbound Vapi webhook payload with stable database-backed idempotency.
      */
+    @SuppressWarnings("unchecked")
     public Object processWebhook(VapiWebhookPayload payload, String rawPayload) {
         if (payload == null || payload.message() == null) {
-            log.warn("Received empty Vapi webhook message.");
+            log.warn("Received empty Vapi webhook message. requestId={}", VoiceOsRequestContext.currentRequestId());
             return Map.of("status", "ok");
         }
 
         VapiMessage message = payload.message();
         VapiCall call = payload.call() != null ? payload.call() : message.call();
         String eventType = message.type() != null ? message.type().toLowerCase() : "unknown";
+        String callId = call != null ? call.id() : null;
+        String eventId = message.id();
+        String requestId = VoiceOsRequestContext.currentRequestId();
 
-        log.info("Processing Vapi Webhook Event: '{}' for Call: {}", eventType, call != null ? call.id() : "N/A");
-
-        // Record webhook event for audit trail & idempotency
-        try {
-            String idempotencyKey = (call != null && call.id() != null ? call.id() : "evt") + "_" + System.currentTimeMillis();
-            WebhookEvent event = new WebhookEvent("VAPI", eventType, objectMapper.convertValue(payload, Map.class), null, idempotencyKey);
-            event.markProcessed();
-            webhookEventRepository.save(event);
-        } catch (Exception e) {
-            log.warn("Could not save WebhookEvent audit record: {}", e.getMessage());
+        if (callId != null) {
+            MDC.put(RequestCorrelationFilter.MDC_CALL_ID, callId);
+        }
+        if (eventId != null) {
+            MDC.put(RequestCorrelationFilter.MDC_EVENT_ID, eventId);
+        }
+        VoiceOsRequestContext current = VoiceOsRequestContext.current();
+        if (current != null) {
+            VoiceOsRequestContext.set(current.withCall(callId, eventId));
         }
 
-        // Route by event type
+        log.info("Processing Vapi webhook eventType={} callId={} eventId={} requestId={}",
+                eventType, callId, eventId, requestId);
+
+        String idempotencyKey = idempotencyKeyBuilder.build(payload);
+        Map<String, Object> storedPayload;
+        try {
+            storedPayload = objectMapper.convertValue(payload, Map.class);
+        } catch (IllegalArgumentException e) {
+            storedPayload = Map.of("eventType", eventType);
+        }
+
+        VapiIdempotencyService.Claim claim;
+        try {
+            claim = vapiIdempotencyService.claim(
+                    idempotencyKey, eventType, callId, eventId, requestId, storedPayload);
+        } catch (RuntimeException ex) {
+            if (!vapiIdempotencyService.isDuplicateConstraint(ex)) {
+                throw ex;
+            }
+            claim = vapiIdempotencyService.awaitDuplicateOrConflict(idempotencyKey);
+        }
+
+        if (claim.isDuplicate()) {
+            log.info("Duplicate Vapi webhook ignored eventType={} callId={} eventId={} requestId={}",
+                    eventType, callId, eventId, requestId);
+            return claim.cachedResponse();
+        }
+        if (claim.kind() == VapiIdempotencyService.Claim.Kind.IN_PROGRESS) {
+            VapiIdempotencyService.Claim waited = vapiIdempotencyService.awaitDuplicateOrConflict(idempotencyKey);
+            log.info("Concurrent Vapi webhook resolved as duplicate eventType={} callId={} requestId={}",
+                    eventType, callId, requestId);
+            return waited.cachedResponse();
+        }
+
+        WebhookEvent event = claim.event();
+        try {
+            Object result = route(eventType, message, call);
+            vapiIdempotencyService.complete(event, result);
+            return result;
+        } catch (RuntimeException e) {
+            vapiIdempotencyService.fail(event, e.getClass().getSimpleName());
+            throw e;
+        }
+    }
+
+    private Object route(String eventType, VapiMessage message, VapiCall call) {
         return switch (eventType) {
             case "tool-calls", "tool-call", "function-call" ->
                     vapiToolService.handleToolCalls(message, call);

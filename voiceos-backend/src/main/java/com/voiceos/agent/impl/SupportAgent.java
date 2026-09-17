@@ -1,6 +1,7 @@
 package com.voiceos.agent.impl;
 
 import com.voiceos.agent.core.Agent;
+import com.voiceos.agent.core.AgentCapability;
 import com.voiceos.agent.core.AgentContext;
 import com.voiceos.agent.core.AgentResult;
 import com.voiceos.ai.LLMProvider;
@@ -12,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * Customer Support and Platform Guide Agent.
@@ -47,6 +49,11 @@ public class SupportAgent implements Agent {
     @Override
     public int getPriority() {
         return 45;
+    }
+
+    @Override
+    public Set<AgentCapability> capabilities() {
+        return Set.of(AgentCapability.SUPPORT);
     }
 
     @Override

@@ -45,6 +45,10 @@ public class VoiceOsException extends RuntimeException {
         return new VoiceOsException(message, HttpStatus.BAD_REQUEST, "BAD_REQUEST");
     }
 
+    public static VoiceOsException unauthorized(String message) {
+        return new VoiceOsException(message, HttpStatus.UNAUTHORIZED, "UNAUTHORIZED");
+    }
+
     public static VoiceOsException forbidden(String message) {
         return new VoiceOsException(message, HttpStatus.FORBIDDEN, "FORBIDDEN");
     }

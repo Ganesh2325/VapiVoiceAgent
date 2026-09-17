@@ -44,11 +44,16 @@ import org.springframework.test.context.TestPropertySource;
         "voiceos.webhooks.vapi-secret=test-secret",
         "voiceos.webhooks.github-secret=",
         "voiceos.webhooks.calendar-secret=",
+        "voiceos.webhooks.require-secret=true",
+        "voiceos.webhooks.allow-insecure-local=false",
         "voiceos.integrations.github.token=",
         "voiceos.integrations.smtp.host=localhost",
         "voiceos.integrations.smtp.port=587",
         "voiceos.integrations.smtp.username=",
-        "voiceos.integrations.smtp.password="
+        "voiceos.integrations.smtp.password=",
+        "spring.data.redis.host=localhost",
+        "spring.data.redis.port=6379",
+        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration,org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration,org.springframework.ai.vectorstore.qdrant.autoconfigure.QdrantVectorStoreAutoConfiguration"
 })
 class VoiceOsApplicationTests {
 

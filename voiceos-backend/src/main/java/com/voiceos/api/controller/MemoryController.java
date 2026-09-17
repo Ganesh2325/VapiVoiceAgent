@@ -3,15 +3,13 @@ package com.voiceos.api.controller;
 import com.voiceos.domain.entity.Memory;
 import com.voiceos.domain.entity.User;
 import com.voiceos.domain.repository.MemoryRepository;
-import com.voiceos.domain.repository.UserRepository;
 import com.voiceos.exception.VoiceOsException;
+import com.voiceos.security.AuthenticatedUserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -27,19 +25,17 @@ import java.util.Map;
 public class MemoryController {
 
     private final MemoryRepository memoryRepository;
-    private final UserRepository userRepository;
+    private final AuthenticatedUserService authenticatedUserService;
 
-    public MemoryController(MemoryRepository memoryRepository, UserRepository userRepository) {
+    public MemoryController(MemoryRepository memoryRepository, AuthenticatedUserService authenticatedUserService) {
         this.memoryRepository = memoryRepository;
-        this.userRepository = userRepository;
+        this.authenticatedUserService = authenticatedUserService;
     }
 
     @Operation(summary = "List all user memories")
     @GetMapping
-    public ResponseEntity<List<Map<String, Object>>> listMemories(
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        User user = getUser(userDetails);
+    public ResponseEntity<List<Map<String, Object>>> listMemories() {
+        User user = authenticatedUserService.requireUser();
         List<Memory> memories = memoryRepository.findByUserIdOrderByUpdatedAtDesc(user.getId());
 
         List<Map<String, Object>> response = memories.stream()
@@ -57,11 +53,8 @@ public class MemoryController {
 
     @Operation(summary = "Save a new long-term memory")
     @PostMapping
-    public ResponseEntity<Map<String, Object>> saveMemory(
-            @RequestBody Map<String, String> body,
-            @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        User user = getUser(userDetails);
+    public ResponseEntity<Map<String, Object>> saveMemory(@RequestBody Map<String, String> body) {
+        User user = authenticatedUserService.requireUser();
         String content = body.get("content");
         String key = body.getOrDefault("key", "preference");
 
@@ -78,14 +71,5 @@ public class MemoryController {
                 "content", memory.getContent(),
                 "type", memory.getMemoryType().name()
         ));
-    }
-
-    private User getUser(UserDetails userDetails) {
-        if (userDetails == null) {
-            return userRepository.findAll().stream().findFirst()
-                    .orElseThrow(() -> VoiceOsException.badRequest("User not found"));
-        }
-        return userRepository.findByEmail(userDetails.getUsername())
-                .orElseThrow(() -> VoiceOsException.notFound("User", userDetails.getUsername()));
     }
 }
