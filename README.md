@@ -209,25 +209,9 @@ GEMINI_API_KEY=         # From https://aistudio.google.com
 GROQ_API_KEY=           # From https://console.groq.com
 JWT_SECRET=             # Random 64+ character string
 ```
-
 ---
 
-## Development Build Phases
-
-| Phase | Status | Scope |
-|---|---|---|
-| 1 | ✅ Complete | Foundation — Spring Boot, security, DB, provider abstractions |
-| 2-7 | ✅ Complete | Vapi Voice Webhooks, Tool Registry, Multi-Agent System |
-| 8-10| ✅ Complete | Memory Persistence, Human Approvals, Execution Tracing |
-| 11 | ✅ Complete | Modular React Dashboard with WebSockets |
-| 12-14| ✅ Complete | RAG (Qdrant), Scheduled Workflows, Evaluation Metrics |
-| 15 | ✅ Complete | Final docs and deployment hardening |
-
----
-
-## Resume Highlights
-
-This project demonstrates:
+**###This project demonstrates:**
 
 ✅ Real-time voice AI (Vapi WebRTC integration)  
 ✅ Multi-agent orchestration (12 specialized agents)  
