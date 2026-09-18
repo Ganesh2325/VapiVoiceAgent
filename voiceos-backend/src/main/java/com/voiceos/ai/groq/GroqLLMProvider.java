@@ -92,13 +92,7 @@ public class GroqLLMProvider implements LLMProvider {
 
     @Override
     public boolean isAvailable() {
-        try {
-            chatModel.call("ping");
-            return true;
-        } catch (Exception e) {
-            log.warn("Groq availability check failed: {}", e.getMessage());
-            return false;
-        }
+        return chatModel != null;
     }
 
     // ─── Private Helpers ─────────────────────────────────────────────────────

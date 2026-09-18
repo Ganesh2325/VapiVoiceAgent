@@ -133,10 +133,48 @@ public record AgentResult(
         );
     }
 
+    public static AgentResult requestTool(String agentName, String toolName, Map<String, Object> arguments,
+                                          Map<String, Object> state, long latencyMs) {
+        Map<String, Object> updates = state != null ? new java.util.HashMap<>(state) : new java.util.HashMap<>();
+        if (arguments != null) {
+            updates.put("toolArguments", Map.copyOf(arguments));
+        }
+        updates.put("selectedTool", toolName);
+        return new AgentResult(
+                agentName,
+                "Requesting tool " + toolName,
+                List.of(),
+                false,
+                null,
+                null,
+                true,
+                updates,
+                latencyMs,
+                AgentOutcome.EXECUTE,
+                toolName,
+                List.of(),
+                null
+        );
+    }
+
     public static AgentResult unsupported(String agentName, String message, long latencyMs) {
         return new AgentResult(
                 agentName, message, List.of(), false, null, null, false, Map.of(), latencyMs,
                 AgentOutcome.FAILED, null, List.of(), AgentErrorCode.UNSUPPORTED_REQUEST.name()
+        );
+    }
+
+    public static AgentResult unavailable(String agentName, String message, long latencyMs) {
+        return new AgentResult(
+                agentName, message, List.of(), false, null, null, false, Map.of(), latencyMs,
+                AgentOutcome.UNAVAILABLE, null, List.of(), AgentErrorCode.UNAVAILABLE.name()
+        );
+    }
+
+    public static AgentResult unavailable(String agentName, String message, Map<String, Object> state, long latencyMs) {
+        return new AgentResult(
+                agentName, message, List.of(), false, null, null, false, state != null ? state : Map.of(), latencyMs,
+                AgentOutcome.UNAVAILABLE, null, List.of(), AgentErrorCode.UNAVAILABLE.name()
         );
     }
 

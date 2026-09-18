@@ -104,3 +104,23 @@ export async function fetchActionTimeline(actionId) {
   }
   return res.json();
 }
+
+export async function fetchVoiceConfig() {
+  const res = await apiFetch('/voice/config');
+  if (!res.ok) {
+    return { configured: false, publicKeyPresent: false, assistantIdPresent: false };
+  }
+  return res.json();
+}
+
+export async function fetchLatestAction() {
+  const res = await apiFetch('/actions');
+  if (!res.ok) {
+    return null;
+  }
+  const actions = await res.json();
+  if (!Array.isArray(actions) || actions.length === 0) {
+    return null;
+  }
+  return actions[0];
+}

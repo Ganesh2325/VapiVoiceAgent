@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -78,10 +79,31 @@ class SecurityApiTest {
     void missingAuthenticationRejected() throws Exception {
         mockMvc.perform(get("/api/v1/conversations"))
                 .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/v1/voice/config"))
+                .andExpect(status().isUnauthorized());
         mockMvc.perform(post("/api/v1/tools/calculator/execute")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"expression\":\"1+1\"}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void voiceConfigDoesNotLeakSecrets() throws Exception {
+        String token = register(uniqueEmail("voiceCfg"), "password12", "Voice Cfg").accessToken();
+        MvcResult result = mockMvc.perform(get("/api/v1/voice/config")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.configured").value(true))
+                .andExpect(jsonPath("$.publicKeyPresent").value(true))
+                .andExpect(jsonPath("$.assistantIdPresent").value(true))
+                .andExpect(jsonPath("$.apiKey").doesNotExist())
+                .andExpect(jsonPath("$.webhookSecret").doesNotExist())
+                .andReturn();
+        String body = result.getResponse().getContentAsString();
+        assertFalse(body.contains("sk-"));
+        assertFalse(body.contains("\"apiKey\""));
+        assertFalse(body.contains("\"webhookSecret\""));
+        assertFalse(body.contains("\"api-key\""));
     }
 
     @Test

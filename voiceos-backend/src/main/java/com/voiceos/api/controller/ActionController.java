@@ -154,6 +154,8 @@ public class ActionController {
         if (action.getPayload() != null) {
             view.put("agentOutcome", action.getPayload().get("agentOutcome"));
             view.put("missingFields", action.getPayload().get("missingFields"));
+            view.put("intent", action.getPayload().get("intent"));
+            view.put("model", action.getPayload().get("model"));
         }
         return view;
     }

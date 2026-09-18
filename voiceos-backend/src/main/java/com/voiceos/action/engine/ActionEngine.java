@@ -16,6 +16,7 @@ import com.voiceos.agent.core.Agent;
 import com.voiceos.agent.core.AgentOutcome;
 import com.voiceos.agent.core.AgentRequest;
 import com.voiceos.agent.core.AgentResult;
+import com.voiceos.agent.decision.ToolArgumentSanitizer;
 import com.voiceos.agent.core.AgentSelector;
 import com.voiceos.config.VoiceOsProperties;
 import com.voiceos.domain.entity.Conversation;
@@ -37,6 +38,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -270,9 +272,27 @@ public class ActionEngine {
 
         AgentOutcome outcome = agentResult.outcome();
         recordAgentOutcome(action, agentResult);
+        applyLlmMetadata(action, agentResult);
         if (agentResult.selectedTool() != null && !agentResult.selectedTool().isBlank()) {
-            action.setToolName(agentResult.selectedTool());
+            String proposed = agentResult.selectedTool();
+            boolean owned = agentOwnsTool(agent, proposed);
+            boolean sameAsPolicyTool = toolName == null || toolName.equalsIgnoreCase(proposed);
+            if (owned && sameAsPolicyTool) {
+                action.setToolName(proposed);
+            }
         }
+
+        AgentResult[] current = { agentResult };
+        List<ToolResult> serverExecuted = new ArrayList<>();
+        ActionExecutionResult toolLoopTerminal = executeApprovedModelTools(
+                action, command, agent, agentRequest, current, planning, startMs, serverExecuted);
+        if (toolLoopTerminal != null) {
+            return toolLoopTerminal;
+        }
+        agentResult = current[0];
+        outcome = agentResult.outcome();
+        recordAgentOutcome(action, agentResult);
+        applyLlmMetadata(action, agentResult);
 
         if (outcome == AgentOutcome.NEEDS_INFORMATION || outcome == AgentOutcome.WAITING_USER) {
             emit(action, planning, AuditEventType.AGENT_SUCCEEDED, AuditActorType.AGENT,
@@ -314,9 +334,14 @@ public class ActionEngine {
                     startMs, List.of(), AuditEventType.ACTION_REJECTED);
         }
 
-        List<ToolResult> tools = agentResult.toolExecutions() != null ? agentResult.toolExecutions() : List.of();
+        List<ToolResult> tools = !serverExecuted.isEmpty()
+                ? List.copyOf(serverExecuted)
+                : (agentResult.toolExecutions() != null ? agentResult.toolExecutions() : List.of());
         boolean noTools = tools.isEmpty();
-        if (noTools && (outcome == AgentOutcome.FAILED || outcome == AgentOutcome.NOT_IMPLEMENTED || !agentResult.success())) {
+        if (noTools && (outcome == AgentOutcome.FAILED
+                || outcome == AgentOutcome.NOT_IMPLEMENTED
+                || outcome == AgentOutcome.UNAVAILABLE
+                || !agentResult.success())) {
             emit(action, planning, AuditEventType.AGENT_FAILED, AuditActorType.AGENT,
                     Map.of("message", firstNonBlank(agentResult.responseText(), "Agent failed")));
             return finish(action, ActionStatus.FAILED,
@@ -332,7 +357,8 @@ public class ActionEngine {
 
         ActionStep execution = null;
         boolean toolFailed = primary != null && !primary.success();
-        if (!tools.isEmpty()) {
+        boolean modelToolAlreadyRun = !serverExecuted.isEmpty();
+        if (!tools.isEmpty() && !modelToolAlreadyRun) {
             execution = beginStep(action, ActionStepType.TOOL_EXECUTION);
             emit(action, execution, AuditEventType.TOOL_STARTED, AuditActorType.TOOL,
                     Map.of("message", "Tool started", "tool", String.valueOf(action.getToolName() != null ? action.getToolName() : toolName)));
@@ -597,6 +623,31 @@ public class ActionEngine {
         return AuditActorType.USER;
     }
 
+    private static void applyLlmMetadata(Action action, AgentResult agentResult) {
+        if (agentResult == null || agentResult.stateUpdates() == null || agentResult.stateUpdates().isEmpty()) {
+            return;
+        }
+        Map<String, Object> state = agentResult.stateUpdates();
+        if (action.getTargetProvider() == null && state.get("llmProvider") != null) {
+            action.setTargetProvider(String.valueOf(state.get("llmProvider")));
+        }
+        if (action.getProviderMode() == null && state.get("providerMode") != null) {
+            action.setProviderMode(String.valueOf(state.get("providerMode")));
+        }
+        if (action.getPayload() == null) {
+            action.setPayload(new HashMap<>());
+        }
+        if (state.get("intent") != null) {
+            action.getPayload().put("intent", state.get("intent"));
+        }
+        if (state.get("model") != null) {
+            action.getPayload().put("model", state.get("model"));
+        }
+        if (state.get("rawUserInput") != null) {
+            action.getPayload().put("rawUserInput", state.get("rawUserInput"));
+        }
+    }
+
     private static void applyProviderMetadata(Action action, ToolResult primary) {
         if (primary == null || primary.data() == null) {
             return;
@@ -627,6 +678,151 @@ public class ActionEngine {
         }).orElse(null);
     }
 
+    private ActionExecutionResult executeApprovedModelTools(
+            Action action,
+            ActionCommand command,
+            Agent agent,
+            AgentRequest agentRequest,
+            AgentResult[] current,
+            ActionStep planning,
+            long startMs,
+            List<ToolResult> executed
+    ) {
+        int max = 2;
+        if (properties != null && properties.agents() != null && properties.agents().maxToolCallsPerAction() > 0) {
+            max = properties.agents().maxToolCallsPerAction();
+        }
+        int calls = 0;
+        while (pendingModelToolCall(current[0]) && calls < max) {
+            AgentResult pending = current[0];
+            String proposed = ToolArgumentSanitizer.sanitizeToolName(pending.selectedTool());
+            Map<String, Object> args = Map.of();
+            Object rawArgs = pending.stateUpdates() != null ? pending.stateUpdates().get("toolArguments") : null;
+            if (rawArgs instanceof Map<?, ?> map) {
+                Map<String, Object> copied = new HashMap<>();
+                map.forEach((k, v) -> copied.put(String.valueOf(k), v));
+                args = ToolArgumentSanitizer.sanitize(copied);
+            }
+            calls++;
+            if (proposed == null) {
+                return finish(action, ActionStatus.FAILED, "Model requested an invalid tool name.",
+                        startMs, executed, AuditEventType.ACTION_FAILED);
+            }
+
+            Optional<Tool> catalog = toolRegistry.getTool(proposed);
+            if (catalog.isEmpty()) {
+                emit(action, planning, AuditEventType.TOOL_FAILED, AuditActorType.TOOL,
+                        Map.of("message", "Unknown tool", "tool", proposed));
+                return finish(action, ActionStatus.FAILED, "Unknown tool: " + proposed,
+                        startMs, executed, AuditEventType.ACTION_FAILED);
+            }
+            Tool tool = catalog.get();
+            action.setToolName(proposed);
+            action.setTargetProvider(tool.getProviderName());
+            action.setProviderMode(tool.getProviderMode() != null ? tool.getProviderMode().name() : "unavailable");
+
+            ActionStep policyStep = beginStep(action, ActionStepType.POLICY_CHECK);
+            PolicyDecision decision = policyEngine.evaluate(new PolicyRequest(
+                    command.userId(),
+                    proposed,
+                    proposed,
+                    tool.getRiskLevel(),
+                    tool.getProviderName(),
+                    args
+            ));
+            emit(action, policyStep, AuditEventType.POLICY_EVALUATED, AuditActorType.SYSTEM, Map.of(
+                    "message", "Policy evaluated",
+                    "outcome", decision.outcome().name(),
+                    "reasonCode", decision.reasonCode() != null ? decision.reasonCode() : "",
+                    "tool", proposed
+            ));
+            if (decision.isDeny()) {
+                failStep(policyStep, decision.reasonCode(), decision.reason());
+                emit(action, policyStep, AuditEventType.POLICY_DENIED, AuditActorType.SYSTEM,
+                        Map.of("message", decision.reason() != null ? decision.reason() : "Denied",
+                                "reasonCode", decision.reasonCode() != null ? decision.reasonCode() : "DENY"));
+                return finish(action, ActionStatus.REJECTED, decision.reason(),
+                        startMs, executed, AuditEventType.ACTION_REJECTED);
+            }
+            if (decision.isRequireApproval()) {
+                succeedStep(policyStep, Map.of("outcome", "REQUIRE_APPROVAL"));
+                ActionStep wait = beginStep(action, ActionStepType.APPROVAL_WAIT);
+                waitUserStep(wait, decision.reason());
+                emit(action, wait, AuditEventType.APPROVAL_REQUIRED, AuditActorType.SYSTEM,
+                        Map.of("message", decision.reason() != null ? decision.reason() : "Approval required"));
+                action.setErrorMessage(decision.reason());
+                action.setStatus(ActionStatus.REQUIRES_APPROVAL);
+                persist(action);
+                logPipeline(action, startMs);
+                return ActionExecutionResult.from(action, List.copyOf(executed), duration(startMs));
+            }
+            succeedStep(policyStep, Map.of("outcome", "ALLOW", "tool", proposed));
+
+            if (!agent.allowsTool(proposed)) {
+                return finish(action, ActionStatus.FAILED,
+                        "Agent is not allowed to request tool: " + proposed,
+                        startMs, executed, AuditEventType.ACTION_FAILED);
+            }
+
+            ActionStep execution = beginStep(action, ActionStepType.TOOL_EXECUTION);
+            emit(action, execution, AuditEventType.TOOL_STARTED, AuditActorType.TOOL,
+                    Map.of("message", "Tool started", "tool", proposed));
+            emit(action, execution, AuditEventType.PROVIDER_STARTED, AuditActorType.PROVIDER, Map.of(
+                    "message", "Provider started",
+                    "provider", tool.getProviderName(),
+                    "providerMode", tool.getProviderMode() != null ? tool.getProviderMode().name() : "unavailable"
+            ));
+            ToolResult toolResult = toolRegistry.executeTool(proposed, args);
+            executed.add(toolResult);
+            applyProviderMetadata(action, toolResult);
+            if (!toolResult.success()) {
+                failStep(execution, "TOOL_FAILED", toolResult.errorMessage());
+                emit(action, execution, AuditEventType.PROVIDER_FAILED, AuditActorType.PROVIDER,
+                        Map.of("message", toolResult.errorMessage() != null ? toolResult.errorMessage() : "Provider failed"));
+                emit(action, execution, AuditEventType.TOOL_FAILED, AuditActorType.TOOL,
+                        Map.of("message", toolResult.errorMessage() != null ? toolResult.errorMessage() : "Tool failed"));
+                current[0] = agent.continueWith(agentRequest, List.copyOf(executed));
+                applyLlmMetadata(action, current[0]);
+                action.setErrorMessage(firstNonBlank(current[0].responseText(), toolResult.errorMessage()));
+                action.setResult(null);
+                return finish(action, ActionStatus.FAILED,
+                        firstNonBlank(current[0].responseText(), toolResult.errorMessage(), "Tool failed"),
+                        startMs, executed, AuditEventType.ACTION_FAILED);
+            }
+            succeedStep(execution, Map.of("result", toolResult.rawOutput() != null ? toolResult.rawOutput() : ""));
+            emit(action, execution, AuditEventType.PROVIDER_SUCCEEDED, AuditActorType.PROVIDER, Map.of(
+                    "message", "Provider succeeded",
+                    "providerMode", action.getProviderMode() != null ? action.getProviderMode() : "unavailable"
+            ));
+            emit(action, execution, AuditEventType.TOOL_SUCCEEDED, AuditActorType.TOOL,
+                    Map.of("message", "Tool succeeded", "tool", proposed));
+
+            ActionVerifier.VerificationResult verified = resultVerifier.verify(action, toolResult);
+            if (!verified.passed()) {
+                return finish(action, ActionStatus.FAILED,
+                        firstNonBlank(verified.reason(), "Verification failed"),
+                        startMs, executed, AuditEventType.ACTION_FAILED);
+            }
+            current[0] = agent.continueWith(agentRequest, List.copyOf(executed));
+            recordAgentOutcome(action, current[0]);
+            applyLlmMetadata(action, current[0]);
+        }
+        if (pendingModelToolCall(current[0])) {
+            return finish(action, ActionStatus.FAILED,
+                    "I reached the tool-call limit before finishing this request.",
+                    startMs, executed, AuditEventType.ACTION_FAILED);
+        }
+        return null;
+    }
+
+    private static boolean pendingModelToolCall(AgentResult result) {
+        if (result == null || result.selectedTool() == null || result.selectedTool().isBlank()) {
+            return false;
+        }
+        boolean alreadyExecuted = result.toolExecutions() != null && !result.toolExecutions().isEmpty();
+        return !alreadyExecuted && result.outcome() == AgentOutcome.EXECUTE;
+    }
+
     private static String resolveToolName(Agent agent, ActionCommand command) {
         if (command.requestedTool() != null && !command.requestedTool().isBlank()) {
             return command.requestedTool();
@@ -648,6 +844,9 @@ public class ActionEngine {
         action.getPayload().put("agentOutcome", agentResult.outcome() != null ? agentResult.outcome().name() : "unavailable");
         if (agentResult.missingFields() != null && !agentResult.missingFields().isEmpty()) {
             action.getPayload().put("missingFields", List.copyOf(agentResult.missingFields()));
+        }
+        if (agentResult.errorCode() != null) {
+            action.getPayload().put("errorCode", agentResult.errorCode());
         }
     }
 

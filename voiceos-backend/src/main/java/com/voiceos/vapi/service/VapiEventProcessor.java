@@ -6,6 +6,7 @@ import com.voiceos.domain.entity.Message;
 import com.voiceos.domain.repository.ConversationRepository;
 import com.voiceos.domain.repository.EvaluationRepository;
 import com.voiceos.domain.repository.MessageRepository;
+import com.voiceos.service.VoiceSessionService;
 import com.voiceos.vapi.dto.VapiWebhookDTOs.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,56 +32,58 @@ public class VapiEventProcessor {
     private final MessageRepository messageRepository;
     private final EvaluationRepository evaluationRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final VoiceSessionService voiceSessionService;
 
     public VapiEventProcessor(
             ConversationRepository conversationRepository,
             MessageRepository messageRepository,
             EvaluationRepository evaluationRepository,
-            SimpMessagingTemplate messagingTemplate
+            SimpMessagingTemplate messagingTemplate,
+            VoiceSessionService voiceSessionService
     ) {
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
         this.evaluationRepository = evaluationRepository;
         this.messagingTemplate = messagingTemplate;
+        this.voiceSessionService = voiceSessionService;
     }
 
     public void processStatusUpdate(VapiMessage message, VapiCall call) {
         log.info("Vapi Call Status Update: callId={}, status={}", call != null ? call.id() : "unknown", message.status());
-        if (call == null || call.id() == null) return;
-
-        UUID convId = UUID.nameUUIDFromBytes(call.id().getBytes());
-        var convOpt = conversationRepository.findById(convId);
-        if (convOpt.isPresent()) {
-            Conversation conv = convOpt.get();
-            if ("ended".equalsIgnoreCase(message.status())) {
-                conv.setStatus(Conversation.ConversationStatus.COMPLETED);
-            } else if ("in-progress".equalsIgnoreCase(message.status())) {
-                conv.setStatus(Conversation.ConversationStatus.ACTIVE);
-            }
-            conversationRepository.save(conv);
+        Conversation conversation = boundConversation(call);
+        if (conversation == null) {
+            return;
         }
+        if ("ended".equalsIgnoreCase(message.status())) {
+            conversation.setStatus(Conversation.ConversationStatus.COMPLETED);
+        } else if ("in-progress".equalsIgnoreCase(message.status())) {
+            conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        }
+        conversationRepository.save(conversation);
     }
 
     public void processTranscript(VapiMessage message, VapiCall call) {
-        if (message.transcript() == null || message.transcript().isBlank()) return;
+        if (message.transcript() == null || message.transcript().isBlank()) {
+            return;
+        }
         String callId = call != null ? call.id() : "unknown";
         log.debug("Vapi Transcript [{}]: {}", message.role(), message.transcript());
 
-        UUID convId = UUID.nameUUIDFromBytes(callId.getBytes());
-        var convOpt = conversationRepository.findById(convId);
-        if (convOpt.isEmpty()) return;
+        Conversation conversation = boundConversation(call);
+        if (conversation == null) {
+            log.debug("Skipping transcript persist; no bound conversation for callId={}", callId);
+            return;
+        }
 
-        Conversation conversation = convOpt.get();
         Message msg = new Message();
         msg.setConversation(conversation);
         msg.setRole("assistant".equalsIgnoreCase(message.role()) ? Message.MessageRole.ASSISTANT : Message.MessageRole.USER);
         msg.setContent(message.transcript());
         messageRepository.save(msg);
 
-        // Broadcast to WebSocket clients
         try {
             messagingTemplate.convertAndSend(
-                    "/topic/executions/" + convId,
+                    "/topic/executions/" + conversation.getId(),
                     Map.of(
                             "type", "TRANSCRIPT",
                             "role", msg.getRole().name(),
@@ -96,9 +99,12 @@ public class VapiEventProcessor {
         log.info("Vapi End of Call Report: callId={}, duration={}s, cost=${}",
                 callId, message.durationSeconds(), message.cost());
 
-        UUID convId = UUID.nameUUIDFromBytes(callId.getBytes());
-        var convOpt = conversationRepository.findById(convId);
-        Conversation conversation = convOpt.orElse(null);
+        UUID convId = voiceSessionService != null && call != null
+                ? voiceSessionService.resolveConversationId(call.id()).orElse(null)
+                : null;
+        Conversation conversation = convId != null && conversationRepository != null
+                ? conversationRepository.findById(convId).orElse(null)
+                : null;
 
         if (conversation != null) {
             conversation.setStatus(Conversation.ConversationStatus.COMPLETED);
@@ -121,6 +127,17 @@ public class VapiEventProcessor {
         if (message.cost() != null) meta.put("cost", message.cost());
         eval.setMetadata(meta);
 
-        evaluationRepository.save(eval);
+        if (evaluationRepository != null) {
+            evaluationRepository.save(eval);
+        }
+    }
+
+    private Conversation boundConversation(VapiCall call) {
+        if (voiceSessionService == null || conversationRepository == null || call == null || call.id() == null) {
+            return null;
+        }
+        return voiceSessionService.resolveConversationId(call.id())
+                .flatMap(conversationRepository::findById)
+                .orElse(null);
     }
 }

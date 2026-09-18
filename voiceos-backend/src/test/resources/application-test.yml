@@ -63,6 +63,7 @@ voiceos:
   agents:
     execution-timeout-ms: 30000
     max-retries: 2
+    max-tool-calls-per-action: 2
   rag:
     chunk-size: 500
     chunk-overlap: 50

@@ -82,16 +82,16 @@ public class LLMProviderConfig {
         }
 
         if (chatModel == null) {
-            log.warn("No Spring AI ChatModel bean available for provider '{}'. Falling back to MockLLMProvider.", provider);
-            return mockLLMProvider;
+            log.warn("No Spring AI ChatModel bean available for provider '{}'. LLM is UNAVAILABLE (no silent MOCK fallback).", provider);
+            return new UnavailableLLMProvider(provider);
         }
 
         return switch (provider.toLowerCase()) {
             case "gemini" -> new GeminiLLMProvider(chatModel, geminiModel);
             case "groq" -> new GroqLLMProvider(chatModel, groqModel);
             default -> {
-                log.warn("Unknown AI provider '{}', using MockLLMProvider", provider);
-                yield mockLLMProvider;
+                log.warn("Unknown AI provider '{}'. LLM is UNAVAILABLE (no silent MOCK fallback).", provider);
+                yield new UnavailableLLMProvider(provider);
             }
         };
     }

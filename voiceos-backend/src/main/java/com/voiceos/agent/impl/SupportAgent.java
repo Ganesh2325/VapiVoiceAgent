@@ -41,9 +41,12 @@ public class SupportAgent implements Agent {
 
     @Override
     public boolean canHandle(AgentContext context) {
-        String input = context.userInput().toLowerCase();
-        return input.contains("help") || input.contains("how do i") || input.contains("support")
-                || input.contains("what can you do") || input.contains("features") || input.contains("docs");
+        String input = context.userInput() != null ? context.userInput().toLowerCase() : "";
+        return input.contains("what can you do")
+                || input.contains("how do i use voiceos")
+                || input.contains("voiceos support")
+                || input.contains("voiceos features")
+                || (input.contains("help") && input.contains("voiceos"));
     }
 
     @Override

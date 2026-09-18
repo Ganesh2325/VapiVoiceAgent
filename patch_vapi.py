@@ -1,5 +1,5 @@
 """
-Patch a Vapi assistant's server URL using credentials from the environment.
+Patch a Vapi assistant's server URL and calculator tool using environment credentials.
 
 Required environment variables:
   VAPI_API_KEY          Vapi private API key (never commit this)
@@ -14,6 +14,22 @@ import os
 import sys
 import urllib.error
 import urllib.request
+
+def load_env_file(path):
+    if not os.path.isfile(path):
+        return
+    with open(path, encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            os.environ.setdefault(key, value)
+
+
+load_env_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 api_key = os.environ.get("VAPI_API_KEY", "").strip()
 assistant_id = os.environ.get("VAPI_ASSISTANT_ID", "").strip()
@@ -35,24 +51,90 @@ url = "https://api.vapi.ai/assistant/" + assistant_id
 headers = {
     "Authorization": "Bearer " + api_key,
     "Content-Type": "application/json",
-    "User-Agent": "VoiceOS-patch-vapi",
+    "User-Agent": "Mozilla/5.0 VoiceOS-patch-vapi/1.0",
+    "Accept": "application/json",
 }
+
+server_config = {
+    "url": server_url,
+    "timeoutSeconds": 20,
+    "secret": webhook_secret,
+}
+
+calculator_tool = {
+    "type": "function",
+    "async": False,
+    "server": server_config,
+    "function": {
+        "name": "calculator",
+        "description": "Evaluate a mathematical expression. Always call this instead of computing the answer yourself.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": "Arithmetic expression such as 125 * 24",
+                }
+            },
+            "required": ["expression"],
+        },
+    },
+}
+
+voiceos_request_tool = {
+    "type": "function",
+    "async": False,
+    "server": server_config,
+    "function": {
+        "name": "voiceos_request",
+        "description": "Route any non-arithmetic user request to VoiceOS agents. Pass the original utterance. Do not invent the answer.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "utterance": {
+                    "type": "string",
+                    "description": "The user's original spoken or typed request, unchanged",
+                }
+            },
+            "required": ["utterance"],
+        },
+    },
+}
+
+system_prompt = (
+    "You are VoiceOS, a voice operations assistant. "
+    "For arithmetic, ALWAYS call the calculator tool with argument expression. "
+    "Never invent or guess the numeric result. "
+    "For any other user request, ALWAYS call voiceos_request with the user's utterance. "
+    "Do not answer general questions yourself."
+)
 
 data = {
-    "server": {
-        "url": server_url,
-        "timeoutSeconds": 20,
-        "secret": webhook_secret,
-    }
+    "serverUrl": server_url,
+    "serverUrlSecret": webhook_secret,
+    "server": server_config,
+    "model": {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "messages": [{"role": "system", "content": system_prompt}],
+        "tools": [calculator_tool, voiceos_request_tool],
+    },
 }
 
-req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers=headers, method="PATCH")
+
+def request(method, payload=None):
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    with urllib.request.urlopen(req) as response:
+        raw = response.read()
+        print("Assistant", method, "HTTP", response.status)
+        return json.loads(raw.decode("utf-8")) if raw else {}
+
 
 try:
-    with urllib.request.urlopen(req) as response:
-        print("Assistant server URL updated. HTTP", response.status)
+    request("PATCH", data)
 except urllib.error.URLError as e:
-    print("Error updating Vapi assistant:", e, file=sys.stderr)
-    if hasattr(e, "read"):
-        print(e.read().decode(), file=sys.stderr)
+    print("Error updating Vapi assistant:", type(e).__name__, file=sys.stderr)
+    if hasattr(e, "code"):
+        print("HTTP", e.code, file=sys.stderr)
     sys.exit(1)

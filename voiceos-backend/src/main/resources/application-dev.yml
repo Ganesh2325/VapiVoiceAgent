@@ -9,6 +9,28 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  ai:
+    openai:
+      # Spring AI OpenAI autoconfig refuses to start with a blank key.
+      # Dev uses MockLLMProvider (voiceos.ai.mock=true). This placeholder is
+      # not a real Groq/OpenAI credential and is not used for calculator.
+      api-key: ${GROQ_API_KEY:local-dev-placeholder-not-a-real-key}
+      chat:
+        enabled: false
+      embedding:
+        enabled: false
+      image:
+        enabled: false
+      audio:
+        speech:
+          enabled: false
+        transcription:
+          enabled: false
+      moderation:
+        enabled: false
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.vectorstore.qdrant.autoconfigure.QdrantVectorStoreAutoConfiguration
 
 voiceos:
   ai:

@@ -121,8 +121,15 @@ public record VoiceOsProperties(
 
     public record AgentsProperties(
             long executionTimeoutMs,
-            int maxRetries
-    ) {}
+            int maxRetries,
+            int maxToolCallsPerAction
+    ) {
+        public AgentsProperties {
+            if (maxToolCallsPerAction <= 0) {
+                maxToolCallsPerAction = 2;
+            }
+        }
+    }
 
     /**
      * Explicit provider bindings. Missing credentials never cause a silent MOCK fallback

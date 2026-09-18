@@ -33,7 +33,8 @@ public record ActionTimelineDto(
         List<EventView> events,
         List<TimelineItem> timeline,
         String agentOutcome,
-        List<String> missingFields
+        List<String> missingFields,
+        String intent
 ) {
     public record StepView(
             UUID stepId,
@@ -110,7 +111,8 @@ public record ActionTimelineDto(
                 eventViews,
                 timeline,
                 payloadString(action, "agentOutcome"),
-                payloadStringList(action, "missingFields")
+                payloadStringList(action, "missingFields"),
+                payloadString(action, "intent")
         );
     }
 

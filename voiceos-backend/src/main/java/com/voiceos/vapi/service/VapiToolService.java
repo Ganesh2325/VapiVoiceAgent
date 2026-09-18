@@ -39,13 +39,9 @@ public class VapiToolService {
     }
 
     public VapiToolCallResponse handleToolCalls(VapiMessage message, VapiCall call) {
-        List<VapiToolCall> calls = message.toolCalls() != null ? message.toolCalls() : message.toolCallList();
-        if (calls == null || calls.isEmpty()) {
-            if (message.functionCall() != null) {
-                calls = List.of(new VapiToolCall("single-call", "function", message.functionCall()));
-            } else {
-                return VapiToolCallResponse.of(List.of());
-            }
+        List<VapiToolCall> calls = resolveToolCalls(message);
+        if (calls.isEmpty()) {
+            return VapiToolCallResponse.of(List.of());
         }
 
         List<VapiToolResult> results = new ArrayList<>();
@@ -108,8 +104,29 @@ public class VapiToolService {
         return VapiToolResult.success(toolCallId, functionName, voice);
     }
 
+    private static List<VapiToolCall> resolveToolCalls(VapiMessage message) {
+        if (hasToolCalls(message.toolCalls())) {
+            return message.toolCalls();
+        }
+        if (hasToolCalls(message.toolCallList())) {
+            return message.toolCallList();
+        }
+        if (message.functionCall() != null) {
+            return List.of(new VapiToolCall("single-call", "function", message.functionCall()));
+        }
+        return List.of();
+    }
+
+    private static boolean hasToolCalls(List<VapiToolCall> calls) {
+        return calls != null && !calls.isEmpty();
+    }
+
     private static String requestedToolName(String functionName) {
-        if (functionName.equals("execute_agent_action") || functionName.equals("voiceos_orchestrator")) {
+        if (functionName.equals("execute_agent_action")
+                || functionName.equals("voiceos_orchestrator")
+                || functionName.equals("voiceos_request")
+                || functionName.equals("general_query")
+                || functionName.equals("answer_question")) {
             return null;
         }
         if (functionName.startsWith("agent_") || functionName.endsWith("_agent")) {
@@ -122,6 +139,9 @@ public class VapiToolService {
         Object input = args.get("input");
         if (input == null) {
             input = args.get("query");
+        }
+        if (input == null) {
+            input = args.get("utterance");
         }
         if (input == null) {
             input = args.get("expression");

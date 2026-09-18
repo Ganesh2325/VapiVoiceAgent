@@ -194,6 +194,7 @@ voiceos:
   agents:
     execution-timeout-ms: 30000
     max-retries: 2
+    max-tool-calls-per-action: 2
 
   # Providers — calculator is REAL local arithmetic. Others default MOCK.
   # Setting mode=REAL without a real implementation yields MISCONFIGURED / UNAVAILABLE.

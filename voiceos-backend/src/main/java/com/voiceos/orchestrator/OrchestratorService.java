@@ -205,12 +205,12 @@ public class OrchestratorService {
         
         Optional<Agent> plannerOpt = agentRegistry.getAgent("PlannerAgent");
         if (plannerOpt.isEmpty()) {
-            return List.of(new AgentPlan.PlanStep(0, "ConversationAgent", "respond", "Process and answer user request", "PENDING", null));
+            return List.of(new AgentPlan.PlanStep(0, "GeneralQueryAgent", "respond", "Process and answer user request", "PENDING", null));
         }
         
         AgentResult result = plannerOpt.get().execute(new AgentContext(null, null, input, List.of(), List.of(), Map.of()));
         if (!result.success() || !result.responseText().startsWith("[")) {
-            return List.of(new AgentPlan.PlanStep(0, "ConversationAgent", "respond", "Process and answer user request", "PENDING", null));
+            return List.of(new AgentPlan.PlanStep(0, "GeneralQueryAgent", "respond", "Process and answer user request", "PENDING", null));
         }
 
         try {
@@ -221,7 +221,7 @@ public class OrchestratorService {
                 Map<String, String> s = parsedSteps.get(i);
                 steps.add(new AgentPlan.PlanStep(
                         i, 
-                        s.getOrDefault("agentName", "ConversationAgent"), 
+                        s.getOrDefault("agentName", "GeneralQueryAgent"), 
                         s.getOrDefault("action", "execute"), 
                         s.getOrDefault("description", "Execute step"), 
                         "PENDING", 
@@ -231,7 +231,7 @@ public class OrchestratorService {
             return steps;
         } catch (Exception e) {
             log.error("Failed to parse PlannerAgent output: {}", e.getMessage());
-            return List.of(new AgentPlan.PlanStep(0, "ConversationAgent", "respond", "Process and answer user request", "PENDING", null));
+            return List.of(new AgentPlan.PlanStep(0, "GeneralQueryAgent", "respond", "Process and answer user request", "PENDING", null));
         }
     }
 

@@ -29,7 +29,7 @@ public class PlannerAgent implements Agent {
 
     private static final String SYSTEM_PROMPT = """
             You are the PlannerAgent. Break down the user's request into a JSON array of steps.
-            Available agents: TravelAgent, TaskAgent, EmailAgent, FinanceAgent, ResearchAgent, CalendarAgent, MemoryAgent, DeveloperAgent, SupportAgent, ConversationAgent.
+            Available agents: TravelAgent, TaskAgent, EmailAgent, FinanceAgent, ResearchAgent, CalendarAgent, MemoryAgent, DeveloperAgent, SupportAgent, GeneralQueryAgent.
             Output strictly a JSON array of objects with keys: 'agentName', 'action', 'description'.
             """;
 

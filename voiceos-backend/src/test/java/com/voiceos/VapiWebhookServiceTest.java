@@ -234,7 +234,7 @@ class VapiWebhookServiceTest {
         securityService = new VapiWebhookSecurityService(props);
         return new VapiWebhookService(
                 toolService,
-                new VapiEventProcessor(null, null, null, null),
+                new VapiEventProcessor(null, null, null, null, null),
                 securityService,
                 new VapiIdempotencyService(mockRepository(eventStore), new ObjectMapper()),
                 new VapiIdempotencyKeyBuilder(),

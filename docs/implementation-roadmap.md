@@ -6,7 +6,7 @@
 
 **Completion rule:** A phase is `DONE` only after compile, tests, and the listed acceptance criteria have actually passed. Status values: `NOT STARTED` | `IN PROGRESS` | `BLOCKED` | `DONE`.
 
-**Current global status:** Phase 0 audit `DONE`. Phase 0B compilation recovery `DONE`. Phase 1 security foundation `DONE`. Phase 2 execution pipeline `DONE`. Phase 3 action steps + audit events `DONE`. Phase 4 provider abstraction + honest mocks `DONE` (`mvnw.cmd test` — 83 tests, 0 failures). Live Vapi `NOT VERIFIED`. Travel/email/WhatsApp/calendar remain MOCK. Product is **not production-ready**.
+**Current global status:** Phase 0–6 `DONE`. Track A Item 1 Live Vapi `PARTIAL`. Phase 7 real intelligence + safe tool calling `DONE` (`mvnw.cmd test` — 142 tests, 0 failures, 1 skipped optional real LLM). Calculator REAL. General answers in tests/dev are MOCK unless a real LLM is configured and verified. Travel/email/WhatsApp/calendar remain MOCK. Product is **not production-ready**. VoiceOS cannot answer everything.
 
 ---
 
@@ -154,7 +154,51 @@
 
 ---
 
-## Phase 6 — Voice accuracy and multilingual
+## Track A — Item 1: Live Vapi verification
+
+| Field | Content |
+|---|---|
+| **Objective** | One real microphone utterance through Vapi to VoiceOS calculator and a spoken `3000`. |
+| **Files affected** | Vapi webhook DTOs/deserializer, `VapiToolService`, `VoiceConfigController`, `VoiceConfiguration`, `VapiEventProcessor`, ConsolePage bind/poll, `patch_vapi.py` |
+| **Dependencies** | Phases 1–5 |
+| **Implementation** | Adapt webhook to current Vapi `toolCallList` contract. Bind `call.id` from Web SDK `start()`. Do not weaken webhook secret or JWT. |
+| **Tests** | 106 tests, 0 failures. Added live payload shape, voice config hygiene. These are **not** live voice evidence. |
+| **Acceptance criteria** | Actual human speech → Vapi → public webhook → Action COMPLETED `3000.00` REAL → spoken response. |
+| **Status** | `PARTIAL` — Vapi env + ngrok SET; WebRTC call bound; public webhook executed REAL `3000.00`. Spoken microphone loop not heard. See `docs/reports/2026-09-18-live-vapi-verification.md`. |
+
+Live human Vapi remains `PARTIAL`. Phase 6 universal routing proceeded because general questions cannot wait on microphone verification; do **not** treat the spoken loop as PASS.
+
+---
+
+## Phase 6 — Universal query routing + GeneralQueryAgent
+
+| Field | Content |
+|---|---|
+| **Objective** | Route every utterance through a real agent. Specialized domains stay specialized. General questions use GeneralQueryAgent + existing LLMProvider. No hardcoded Q&A. |
+| **Files affected** | `GeneralQueryAgent`, `UnavailableLLMProvider`, `RegistryAgentSelector`, `LLMProviderConfig`, `ActionEngine`, `VapiToolService`, `VoiceConfiguration`, ConsolePage, Phase 6 tests |
+| **Dependencies** | Phase 5 agent contracts |
+| **Implementation** | ConversationAgent replaced by GeneralQueryAgent. Selector: tool ownership → specialized canHandle → GeneralQueryAgent. No silent REAL→MOCK LLM fallback. Real-time questions without a provider return UNAVAILABLE. |
+| **Tests** | 128 tests, 0 failures. Routing, mock labeling, unavailable/failure LLM, calculator 3000.00 REAL, travel clarification, weather UNAVAILABLE, Vapi-like voiceos_request, user isolation. |
+| **Acceptance criteria** | Universal routing. Specialized agents win. Honest MOCK/UNAVAILABLE. PolicyEngine not bypassed. Calculator REAL. Live human Vapi still PARTIAL. |
+| **Status** | `DONE` — see `docs/reports/2026-09-18-phase-6-universal-query-agent.md`. |
+
+---
+
+## Phase 7 — Real intelligence + safe tool calling
+
+| Field | Content |
+|---|---|
+| **Objective** | Real LLM path when configured; structured model tool requests; bounded ActionEngine/PolicyEngine tool loop; honest failures. |
+| **Files affected** | `GeneralQueryAgent`, `ModelDecision*`, `ToolArgumentSanitizer`, `ActionEngine`, `IntentClassifier`, MockLLMProvider, tests, ConsolePage |
+| **Dependencies** | Phase 6 |
+| **Implementation** | ModelDecision JSON. Allowlist calculator. ActionEngine executes requested tools after policy. Max 2 tool calls. No silent REAL→MOCK. |
+| **Tests** | 142 run, 0 failures, 1 skipped (optional real LLM). Direct UtilityAgent calculator preserved. GeneralQueryAgent product-of 125×24 → REAL 3000.00. |
+| **Acceptance criteria** | Structured untrusted output. Policy on actual tool. Unknown/forbidden/high-risk/failure paths honest. Live Vapi still PARTIAL. Real LLM this run UNVERIFIED. |
+| **Status** | `DONE` — see `docs/reports/2026-09-19-phase-7-real-intelligence-tool-use.md`. Stop here. Do **not** auto-start Travel, Email, WhatsApp, Calendar, Payment, RAG, multilingual, or multi-agent loops. |
+
+---
+
+## Deferred — Voice accuracy and multilingual (former Phase 6 slot)
 
 | Field | Content |
 |---|---|
@@ -363,7 +407,8 @@
               │
               ├─► 3 Action steps + audit events (DONE)
               ├─► 4 Providers/mocks (DONE)
-              ├─► 6 Voice/multilingual
+              ├─► 6 Universal query routing (DONE)
+              ├─► 6b Voice/multilingual (deferred, NOT STARTED)
               │
               ▼
             5 Agent contracts
@@ -391,8 +436,6 @@
 
 ## Immediate next phase
 
-**Phase 1 — Secret hygiene and fail-closed security.**
+Phase 7 real intelligence + safe tool calling is complete. Do not start the next milestone automatically.
 
-Do not start automatically. Wait for an explicit request.
-
-Phase 0B is complete: `mvnw.cmd test` — 18 tests, 0 failures.
+Live human Vapi microphone loop remains PARTIAL / UNVERIFIED. Real Gemini/Groq generation was not executed in this test run. Travel, Email, WhatsApp, Calendar, Payments, RAG, multilingual, and multi-agent loops require a separate explicit request.

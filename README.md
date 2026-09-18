@@ -153,9 +153,13 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev
 
 ### Agent System
 
-12 specialized agents orchestrated by a central `OrchestratorService`:
+VoiceOS routes natural-language requests through specialized agents
+or a general query agent, using approved tools where available and
+reporting unavailable capabilities honestly.
 
-- **ConversationAgent** — general conversation fallback
+12 specialized agents plus `GeneralQueryAgent`, selected by `AgentSelector` and executed by `ActionEngine`:
+
+- **GeneralQueryAgent** — general questions, writing, and server-approved low-risk tool requests
 - **ResearchAgent** — web research and summarization
 - **TravelAgent** — trip planning and itinerary generation
 - **CalendarAgent** — schedule management

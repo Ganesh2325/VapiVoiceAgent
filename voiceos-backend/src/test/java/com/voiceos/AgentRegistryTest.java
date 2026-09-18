@@ -1,9 +1,8 @@
 package com.voiceos;
 
-import com.voiceos.agent.core.Agent;
 import com.voiceos.agent.core.AgentContext;
 import com.voiceos.agent.core.AgentRegistry;
-import com.voiceos.agent.impl.ConversationAgent;
+import com.voiceos.agent.impl.GeneralQueryAgent;
 import com.voiceos.agent.impl.TravelAgent;
 import com.voiceos.ai.mock.MockLLMProvider;
 import com.voiceos.tool.core.ToolRegistry;
@@ -16,30 +15,31 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AgentRegistryTest {
 
     private AgentRegistry agentRegistry;
-    private MockLLMProvider mockLlmProvider;
     private ToolRegistry toolRegistry;
 
     @BeforeEach
     void setUp() {
-        mockLlmProvider = new MockLLMProvider();
-        toolRegistry = new ToolRegistry(List.of(new CalculatorTool(new com.voiceos.provider.calculator.RealLocalCalculatorProvider()), new SearchTool()));
+        toolRegistry = new ToolRegistry(List.of(
+                new CalculatorTool(new com.voiceos.provider.calculator.RealLocalCalculatorProvider()),
+                new SearchTool()));
 
-        ConversationAgent convAgent = new ConversationAgent(mockLlmProvider);
+        GeneralQueryAgent general = new GeneralQueryAgent(new MockLLMProvider(), null);
         TravelAgent travelAgent = new TravelAgent(toolRegistry);
 
-        agentRegistry = new AgentRegistry(List.of(convAgent, travelAgent));
+        agentRegistry = new AgentRegistry(List.of(general, travelAgent));
     }
 
     @Test
     void testAgentDiscovery() {
         assertEquals(2, agentRegistry.getAllAgents().size());
         assertTrue(agentRegistry.hasAgent("TravelAgent"));
-        assertTrue(agentRegistry.hasAgent("ConversationAgent"));
+        assertTrue(agentRegistry.hasAgent("GeneralQueryAgent"));
     }
 
     @Test
@@ -48,7 +48,7 @@ class AgentRegistryTest {
                 UUID.randomUUID(), UUID.randomUUID(), "Plan a trip to Bangalore for next Friday"
         );
 
-        Optional<Agent> handler = agentRegistry.findHandler(context);
+        Optional<com.voiceos.agent.core.Agent> handler = agentRegistry.findHandler(context);
         assertTrue(handler.isPresent());
         assertEquals("TravelAgent", handler.get().getName());
     }
@@ -59,8 +59,7 @@ class AgentRegistryTest {
                 UUID.randomUUID(), UUID.randomUUID(), "Hello, how are you today?"
         );
 
-        Optional<Agent> handler = agentRegistry.findHandler(context);
-        // Specialized handler should be empty so orchestrator uses ConversationAgent
+        Optional<com.voiceos.agent.core.Agent> handler = agentRegistry.findHandler(context);
         assertTrue(handler.isEmpty());
     }
 }

@@ -35,7 +35,7 @@ public class ActionPlanner {
         String requestedTool = action.getToolName();
         agentSelector.select(context, requestedTool).ifPresentOrElse(
                 (Agent agent) -> action.setTargetAgent(agent.getName()),
-                () -> action.setTargetAgent("ConversationAgent")
+                () -> action.setTargetAgent("GeneralQueryAgent")
         );
 
         action.setStatus(ActionStatus.PLANNED);

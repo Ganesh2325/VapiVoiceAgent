@@ -91,15 +91,8 @@ public class GeminiLLMProvider implements LLMProvider {
     }
 
     @Override
-    public boolean isAvailable() {
-        try {
-            // Lightweight probe — will fail quickly if API key is invalid
-            chatModel.call("ping");
-            return true;
-        } catch (Exception e) {
-            log.warn("Gemini availability check failed: {}", e.getMessage());
-            return false;
-        }
+    public boolean     isAvailable() {
+        return chatModel != null;
     }
 
     // ─── Private Helpers ─────────────────────────────────────────────────────

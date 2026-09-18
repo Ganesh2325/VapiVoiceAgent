@@ -7,9 +7,10 @@ import java.util.Optional;
 /**
  * Deterministic routing:
  * <ol>
- *   <li>requested tool ownership (excluding ConversationAgent), priority then name</li>
- *   <li>{@link AgentRegistry#findHandler(AgentRequest)}</li>
- *   <li>ConversationAgent fallback</li>
+ *   <li>requested tool ownership (excluding GeneralQueryAgent)</li>
+ *   <li>deterministic specialized {@code canHandle}</li>
+ *   <li>structured intent labels via {@link IntentClassifier} (routing hint only; does not pick the agent)</li>
+ *   <li>GeneralQueryAgent fallback</li>
  * </ol>
  * Client-supplied agent names are ignored.
  */
@@ -39,6 +40,7 @@ public class RegistryAgentSelector implements AgentSelector {
         if (handler.isPresent()) {
             return handler;
         }
-        return agentRegistry.getAgent("ConversationAgent");
+        return agentRegistry.getAgent("GeneralQueryAgent")
+                .or(() -> agentRegistry.getAgent("ConversationAgent"));
     }
 }

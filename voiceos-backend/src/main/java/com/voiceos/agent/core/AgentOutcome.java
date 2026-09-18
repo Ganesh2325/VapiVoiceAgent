@@ -12,5 +12,6 @@ public enum AgentOutcome {
     REJECTED,
     FAILED,
     CANCELLED,
-    NOT_IMPLEMENTED
+    NOT_IMPLEMENTED,
+    UNAVAILABLE
 }

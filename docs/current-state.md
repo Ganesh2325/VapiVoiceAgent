@@ -1,9 +1,9 @@
 # VoiceOS Current State — Repository Audit
 
 **Audit date:** 2026-09-17  
-**Last verified:** 2026-09-17 Phase 5 (agent contracts + routing foundation)  
+**Last verified:** 2026-09-19 Phase 7 real intelligence + safe tool calling (real Gemini/Groq **UNVERIFIED** in this run; live Vapi microphone loop still **PARTIAL / UNVERIFIED**)  
 **Scope:** Entire existing repository (`D:\vapi`).  
-**Evidence standard:** A feature is **complete** only if it is implemented **and** tested. Existing classes, UI cards, and configuration files are not completion evidence.
+**Evidence standard:** A feature is **complete** only if it is implemented **and** tested. Existing classes, UI cards, and configuration files are not completion evidence. Live Vapi is complete only after an actual microphone call.
 
 **Phase 0 audit compile (before 0B):**
 
@@ -83,6 +83,44 @@ npm run build (frontend) SUCCESS        vite v8.2.1, 12.17s
 Agent layer is now a structured contract: `AgentRequest` → `Agent` → `AgentResult` (`EXECUTE` / `NEEDS_INFORMATION` / `NEEDS_USER_CONFIRMATION` / `FAILED` / `REJECTED` / `NOT_IMPLEMENTED`). Selection is deterministic (tool ownership → canHandle → ConversationAgent; lower priority wins, then name). Calculator remains **REAL** (`125 * 24` = `3000.00` via UtilityAgent). FinanceAgent no longer invents `$258`. Incomplete agents return `NOT_IMPLEMENTED`. Live Vapi remains **NOT VERIFIED**. No LLM integration. No new external APIs.
 
 See `docs/reports/2026-09-17-phase-5-agent-contracts.md`.
+
+**Phase 6 compile and tests (universal query routing):**
+
+```
+mvnw.cmd clean compile   BUILD SUCCESS  (2026-09-18)
+mvnw.cmd test            BUILD SUCCESS  Tests run: 128, Failures: 0, Errors: 0, Skipped: 0
+mvnw.cmd package         BUILD SUCCESS  jar: voiceos-backend-1.0.0-SNAPSHOT.jar
+npm run build (frontend) SUCCESS        vite v8.2.1, 3.45s
+```
+
+Every unmatched utterance now falls through to `GeneralQueryAgent` (ConversationAgent removed). Specialized agents still win on their domains. General answers use existing `LLMProvider` (tests/dev default **MOCK**, labeled `[MOCK DATA]`; missing real ChatModel is **UNAVAILABLE**, no silent MOCK fallback). Calculator remains **REAL** `3000.00`. Weather/current facts are not fabricated. Live human Vapi loop remains **PARTIAL / UNVERIFIED**. VoiceOS cannot answer everything.
+
+See `docs/reports/2026-09-18-phase-6-universal-query-agent.md`.
+
+**Phase 7 compile and tests (real intelligence + safe tool calling):**
+
+```
+mvnw.cmd clean compile   BUILD SUCCESS  (2026-09-19)
+mvnw.cmd test            BUILD SUCCESS  Tests run: 142, Failures: 0, Errors: 0, Skipped: 1
+mvnw.cmd package         BUILD SUCCESS  jar: voiceos-backend-1.0.0-SNAPSHOT.jar
+npm run build (frontend) SUCCESS        vite v8.2.1, 4.25s
+```
+
+GeneralQueryAgent may request server-allowlisted `calculator` through ActionEngine → PolicyEngine → ToolRegistry → RealLocalCalculatorProvider (**REAL** `3000.00`) → LLM continuation. Specialized UtilityAgent still owns “Calculate 125 multiplied by 24.” Model output is structured and untrusted. Mock LLM remains default in tests/dev. Optional real LLM test skipped (`VOICEOS_REAL_LLM_TEST` missing). Live human Vapi remains **PARTIAL / UNVERIFIED**. VoiceOS cannot answer everything.
+
+See `docs/reports/2026-09-19-phase-7-real-intelligence-tool-use.md`.
+
+**Track A Item 1 — Live Vapi verification (2026-09-18):**
+
+```
+mvnw.cmd test            BUILD SUCCESS  Tests run: 106, Failures: 0, Errors: 0, Skipped: 0
+mvnw.cmd package         BUILD SUCCESS  jar: voiceos-backend-1.0.0-SNAPSHOT.jar
+npm run build (frontend) SUCCESS        vite v8.2.1, 3.88s
+```
+
+Live calculator voice loop is **PARTIAL**, not PASS. Local `.env` Vapi keys, ngrok public HTTPS, assistant calculator tool, WebRTC bind, and public webhook secret checks are SET. A bound public `tool-calls` webhook executed UtilityAgent / calculator / RealLocalCalculatorProvider REAL `3000.00`. No microphone utterance and no spoken `3000` were heard in the automated browser. See `docs/reports/2026-09-18-live-vapi-verification.md`.
+
+See `docs/reports/2026-09-18-live-vapi-verification.md`.
 
 ---
 
@@ -200,7 +238,8 @@ All agents are Spring `@Component` beans discovered by `AgentRegistry`. Routing 
 | DeveloperAgent | `agent/impl/DeveloperAgent.java` | github/repository/repo/PR/architecture/code review | Always inspects hardcoded `voiceos/core` | Yes | None |
 | SupportAgent | `agent/impl/SupportAgent.java` | help/how do i/support/features/docs | LLM prompt only; no tools | Yes | None |
 | EvaluationAgent | `agent/impl/EvaluationAgent.java` | evaluate/quality/metrics/benchmark/accuracy | **Hardcoded fake metrics** (96.4% success, 0.03 hallucination). Does not read `EvaluationRepository`. | Yes | None |
-| ConversationAgent | `agent/impl/ConversationAgent.java` | always true (fallback) | LLM chat | Yes | Registry presence only |
+| ConversationAgent | removed in Phase 6 | — | Replaced by GeneralQueryAgent | — | — |
+| GeneralQueryAgent | `agent/impl/GeneralQueryAgent.java` | always true (fallback, excluded from specialized findHandler) | LLMProvider + structured tool requests (calculator allowlist); MOCK/UNAVAILABLE/REAL honest | Yes | Phase6 + Phase7 tests |
 | PlannerAgent | `agent/impl/PlannerAgent.java` | multi-step / execution plan | `LLMProvider.chat`; JSON array or `PLAN_NOT_GENERATED` failure | Yes | None dedicated |
 | ApprovalAgent | `agent/impl/ApprovalAgent.java` | approval queue keywords | Returns `NOT_IMPLEMENTED` failure. Real approvals are `ApprovalService`. | Yes | None |
 | NotificationAgent | `agent/impl/NotificationAgent.java` | send notification | Returns `NOT_IMPLEMENTED`. Does not send. | Yes | None |

@@ -1,8 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
-import Vapi from '@vapi-ai/web';
+import VapiImport from '@vapi-ai/web';
 import { Phone, PhoneOff, Mic, Send, Terminal, Zap, ArrowRight, Cpu } from 'lucide-react';
-import { apiFetch, fetchActionTimeline } from '../services/api';
+import { apiFetch, fetchActionTimeline, fetchLatestAction, fetchVoiceConfig, getAccessToken } from '../services/api';
 import { wsService } from '../services/WebSocketService';
+
+function vapiConstructor() {
+  if (typeof VapiImport === 'function') {
+    return VapiImport;
+  }
+  if (VapiImport && typeof VapiImport.default === 'function') {
+    return VapiImport.default;
+  }
+  return null;
+}
 
 export default function ConsolePage({ isCallActive, setIsCallActive }) {
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -11,8 +21,12 @@ export default function ConsolePage({ isCallActive, setIsCallActive }) {
   const [transcript, setTranscript] = useState('');
   const [conversationId, setConversationId] = useState(null);
 
-  const [vapiPublicKey, setVapiPublicKey] = useState(import.meta.env.VITE_VAPI_PUBLIC_KEY || '');
-  const [vapiAssistantId, setVapiAssistantId] = useState(import.meta.env.VITE_VAPI_ASSISTANT_ID || '');
+  const [vapiPublicKey, setVapiPublicKey] = useState('');
+  const [vapiAssistantId, setVapiAssistantId] = useState('');
+  const [vapiConfigured, setVapiConfigured] = useState(false);
+  const [sessionBound, setSessionBound] = useState(false);
+  const [boundCallId, setBoundCallId] = useState('');
+  const [voiceStatus, setVoiceStatus] = useState('Live Vapi is not configured');
 
   const vapiRef = useRef(null);
   const chatBottomRef = useRef(null);
@@ -35,6 +49,57 @@ export default function ConsolePage({ isCallActive, setIsCallActive }) {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, executionTimeline]);
 
+  useEffect(() => {
+    const loadVoiceConfig = async () => {
+      if (!getAccessToken()) {
+        setVapiConfigured(false);
+        setVapiPublicKey('');
+        setVapiAssistantId('');
+        setVoiceStatus('Log in to start a live Vapi call');
+        return;
+      }
+      const config = await fetchVoiceConfig();
+      const publicKey = config.publicKey || '';
+      const assistantId = config.assistantId || '';
+      const configured = Boolean(config.configured && publicKey && assistantId);
+      setVapiPublicKey(publicKey);
+      setVapiAssistantId(assistantId);
+      setVapiConfigured(configured);
+      setVoiceStatus(configured
+        ? 'Vapi Voice Agent Ready'
+        : 'Live Vapi is not configured (public key / assistant id missing)');
+    };
+    loadVoiceConfig();
+    window.addEventListener('voiceos:auth-changed', loadVoiceConfig);
+    window.addEventListener('voiceos:unauthorized', loadVoiceConfig);
+    return () => {
+      window.removeEventListener('voiceos:auth-changed', loadVoiceConfig);
+      window.removeEventListener('voiceos:unauthorized', loadVoiceConfig);
+    };
+  }, []);
+
+  const applyBackendAction = async (action) => {
+    if (!action?.actionId) {
+      return;
+    }
+    const timeline = await fetchActionTimeline(action.actionId);
+    const merged = {
+      ...action,
+      ...(timeline || {}),
+      duration: timeline?.durationMs != null ? timeline.durationMs : action.durationMs
+    };
+    setLastAction(merged);
+    if (Array.isArray(merged.timeline) && merged.timeline.length > 0) {
+      setExecutionTimeline(merged.timeline.map((item, idx) => ({
+        step: idx + 1,
+        agent: item.agent || merged.agent || 'ActionEngine',
+        action: item.message || item.type,
+        status: item.status || merged.status,
+        latency: item.timestamp || ''
+      })));
+    }
+  };
+
   // Connect to Spring Boot WebSocket
   useEffect(() => {
     if (conversationId) {
@@ -48,24 +113,45 @@ export default function ConsolePage({ isCallActive, setIsCallActive }) {
     return () => wsService.disconnect();
   }, [conversationId]);
 
+  useEffect(() => {
+    if (!isCallActive || !getAccessToken()) {
+      return undefined;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      const action = await fetchLatestAction();
+      if (!cancelled && action) {
+        await applyBackendAction(action);
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isCallActive]);
+
   // Initialize Vapi SDK instance
   useEffect(() => {
     if (vapiPublicKey) {
       try {
+        const Vapi = vapiConstructor();
+        if (!Vapi) {
+          console.warn('Vapi SDK constructor is unavailable');
+          return undefined;
+        }
         const vapi = new Vapi(vapiPublicKey);
         vapiRef.current = vapi;
 
         vapi.on('call-start', () => {
           setIsCallActive(true);
-          setExecutionTimeline(prev => [
-            { step: prev.length + 1, agent: 'Vapi WebRTC', action: 'Voice Session Connected', status: 'COMPLETED', latency: 'unavailable' },
-            ...prev
-          ]);
         });
 
         vapi.on('call-end', () => {
           setIsCallActive(false);
           setIsSpeaking(false);
+          setSessionBound(false);
         });
 
         vapi.on('speech-start', () => setIsSpeaking(true));
@@ -102,16 +188,54 @@ export default function ConsolePage({ isCallActive, setIsCallActive }) {
     if (isCallActive) {
       if (vapiRef.current) vapiRef.current.stop();
       setIsCallActive(false);
+      setSessionBound(false);
       return;
     }
-    if (!vapiPublicKey || !vapiAssistantId) {
-      alert('Vapi keys missing! Please configure them in your environment variables.');
+    if (!getAccessToken()) {
+      setVoiceStatus('Log in to start a live Vapi call');
+      return;
+    }
+    if (!vapiConfigured || !vapiPublicKey || !vapiAssistantId) {
+      setVoiceStatus('Live Vapi is not configured (public key / assistant id missing)');
       return;
     }
     try {
-      if (vapiRef.current) await vapiRef.current.start(vapiAssistantId);
+      let currentConvId = conversationId;
+      if (!currentConvId) {
+        const initRes = await apiFetch('/conversations', {
+          method: 'POST',
+          body: JSON.stringify({ title: 'Live Vapi call' })
+        });
+        if (initRes.ok) {
+          const created = await initRes.json();
+          currentConvId = created.id;
+          setConversationId(currentConvId);
+        }
+      }
+      const call = await vapiRef.current.start(vapiAssistantId);
+      const callId = call?.id;
+      if (!callId) {
+        setSessionBound(false);
+        setVoiceStatus('Vapi SDK did not return a call id; VoiceSession is not bound');
+        if (vapiRef.current) vapiRef.current.stop();
+        return;
+      }
+      const bindRes = await apiFetch('/voice/sessions', {
+        method: 'POST',
+        body: JSON.stringify({ callId, conversationId: currentConvId })
+      });
+      if (!bindRes.ok) {
+        setSessionBound(false);
+        setBoundCallId(callId);
+        setVoiceStatus('Call started but VoiceSession bind failed');
+        return;
+      }
+      setBoundCallId(callId);
+      setSessionBound(true);
+      setVoiceStatus('Live Vapi Call Connected');
     } catch (err) {
       console.error('Failed to start Vapi call:', err);
+      setVoiceStatus('Failed to start Vapi call');
     }
   };
 
@@ -262,10 +386,20 @@ export default function ConsolePage({ isCallActive, setIsCallActive }) {
             </div>
             <div>
               <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '2px' }}>
-                {isCallActive ? (isSpeaking ? 'Vapi Assistant Speaking...' : 'Live Vapi Call Connected (Listening...)') : 'Vapi Voice Agent Ready'}
+                {isCallActive
+                  ? (sessionBound
+                    ? (isSpeaking ? 'Vapi Assistant Speaking...' : 'Live Vapi Call Connected (Listening...)')
+                    : 'Call started — VoiceSession not bound')
+                  : (vapiConfigured ? 'Vapi Voice Agent Ready' : voiceStatus)}
               </h3>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                {isCallActive ? 'Speak directly to instruct your multi-agent team in real-time.' : 'Click the orb or call button to start live WebRTC voice session.'}
+                {isCallActive
+                  ? (sessionBound
+                    ? `Speak to VoiceOS. Bound call ${boundCallId}.`
+                    : 'The webhook will reject calculator until this call is bound to your login.')
+                  : (vapiConfigured
+                    ? 'Click the orb or call button to start a live WebRTC voice session.'
+                    : 'Live Vapi requires login plus VAPI_PUBLIC_KEY and VAPI_ASSISTANT_ID on the backend.')}
               </p>
             </div>
           </div>
@@ -407,7 +541,8 @@ export default function ConsolePage({ isCallActive, setIsCallActive }) {
                 <div>actionId: {lastAction.actionId || 'n/a'}</div>
                 <div>status: {lastAction.status || 'n/a'}</div>
                 <div>agent: {lastAction.agent || 'n/a'}</div>
-                <div>tool: {lastAction.tool || 'n/a'}</div>
+                <div>intent: {lastAction.intent || 'n/a'}</div>
+                <div>tool: {lastAction.tool || 'none'}</div>
                 <div>provider: {lastAction.provider || 'n/a'}</div>
                 <div>mode: {lastAction.providerMode || 'unavailable'}</div>
                 <div>policy: {lastAction.policyDecision || 'unavailable'}</div>
@@ -441,8 +576,10 @@ export default function ConsolePage({ isCallActive, setIsCallActive }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {[
                 'Calculate 125 multiplied by 24',
+                'What is the product of 125 and 24?',
+                'What is dependency injection in Spring Boot?',
                 'Plan my trip to Bangalore next Friday',
-                'What are my saved travel preferences?'
+                'Write a professional email asking my professor for an extension.'
               ].map((prompt, idx) => (
                 <button
                   key={idx}

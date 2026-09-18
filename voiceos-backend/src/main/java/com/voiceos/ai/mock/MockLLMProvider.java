@@ -35,8 +35,10 @@ public class MockLLMProvider implements LLMProvider {
 
         String generatedContent;
 
-        // Check if orchestrator is asking for structured plan JSON
-        if (systemPrompt.contains("orchestrator") || systemPrompt.contains("execution plan") || systemPrompt.contains("json")) {
+        if (systemPrompt.contains("generalqueryagent")) {
+            generatedContent = generateGeneralQueryDecision(request);
+        } else if (systemPrompt.contains("orchestrator") || systemPrompt.contains("execution plan")
+                || systemPrompt.contains("planneragent")) {
             generatedContent = generateMockPlanJson(userMsg);
         } else if (userMsg.contains("bangalore") || userMsg.contains("trip") || userMsg.contains("travel")) {
             generatedContent = generateMockTravelResponse(userMsg);
@@ -120,7 +122,7 @@ public class MockLLMProvider implements LLMProvider {
         {
           "goal": "Process user request",
           "steps": [
-            {"stepIndex": 0, "agentName": "ConversationAgent", "action": "respond", "description": "Generate helpful response to user"}
+            {"stepIndex": 0, "agentName": "GeneralQueryAgent", "action": "respond", "description": "Generate helpful response to user"}
           ]
         }
         """;
@@ -188,5 +190,70 @@ public class MockLLMProvider implements LLMProvider {
 
     private String generateGenericMockResponse(String userMsg) {
         return "[MOCK DATA] I processed your request: \"" + (userMsg != null ? userMsg : "") + "\". How else can I assist you?";
+    }
+
+    private String generateGeneralQueryDecision(LLMRequest request) {
+        String user = request.userMessage() != null ? request.userMessage() : "";
+        String lower = user.toLowerCase();
+        if (lower.contains("tool result")) {
+            String echoed = user;
+            int idx = lower.indexOf("tool result");
+            if (idx >= 0) {
+                echoed = user.substring(idx);
+            }
+            boolean failed = lower.contains("success=false") || lower.contains("failed:");
+            String answer = failed
+                    ? "[MOCK DATA] The tool did not succeed. " + echoed
+                    : "[MOCK DATA] Using the tool result: " + echoed;
+            return """
+                    {"outcome":"ANSWER","intent":"CALCULATION","answer":%s,"toolCall":null,"missingFields":[]}
+                    """.formatted(jsonString(answer));
+        }
+        if (looksLikeArithmetic(lower)) {
+            String expression = extractMockExpression(user);
+            return """
+                    {"outcome":"TOOL","intent":"CALCULATION","answer":null,"toolCall":{"toolName":"calculator","arguments":{"expression":%s}},"missingFields":[]}
+                    """.formatted(jsonString(expression));
+        }
+        String answer = generateGenericMockResponse(user);
+        String intent = "GENERAL_QUESTION";
+        if (lower.contains("write") || lower.contains("draft") || lower.contains("compose")) {
+            intent = "WRITING";
+        } else if (lower.contains("explain") || lower.contains("difference") || lower.startsWith("why ")) {
+            intent = "EXPLANATION";
+        }
+        return """
+                {"outcome":"ANSWER","intent":%s,"answer":%s,"toolCall":null,"missingFields":[]}
+                """.formatted(jsonString(intent), jsonString(answer));
+    }
+
+    private static boolean looksLikeArithmetic(String lower) {
+        return lower.contains("product of")
+                || lower.contains("multiplied")
+                || lower.contains("calculate")
+                || lower.contains("times ")
+                || lower.matches(".*\\d+\\s*[*x×+]\\s*\\d+.*");
+    }
+
+    private static String extractMockExpression(String user) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(\\d+(?:\\.\\d+)?)\\s*(?:and|\\*|x|×|times|multiplied by|plus|\\+)\\s*(\\d+(?:\\.\\d+)?)",
+                        java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(user);
+        if (matcher.find()) {
+            String op = matcher.group(0).toLowerCase().contains("plus") || matcher.group(0).contains("+") ? " + " : " * ";
+            if (user.contains("+") && !user.toLowerCase().contains("plus")) {
+                op = " + ";
+            }
+            return matcher.group(1) + op + matcher.group(2);
+        }
+        return "125 * 24";
+    }
+
+    private static String jsonString(String value) {
+        if (value == null) {
+            return "null";
+        }
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\"";
     }
 }

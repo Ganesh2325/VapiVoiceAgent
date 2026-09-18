@@ -3,6 +3,8 @@ package com.voiceos.voice;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @Configuration
@@ -16,40 +18,83 @@ public class VoiceConfiguration {
     private double speakingRate = 1.0;
     private String transcriber = "deepgram";
     private String transcriberModel = "nova-2";
-    
-    // Default system prompt
-    private String systemPrompt = "You are VoiceOS, an AI operations assistant. " +
-            "CRITICAL RULES: " +
-            "1. You must not blindly guess names, emails, dates, or locations if you are unsure. " +
-            "2. If an entity is ambiguous (e.g. 'Rahul' but there are multiple, or 'the 18th' but month is unclear), you MUST explicitly ask for clarification. " +
-            "3. Before executing high-risk actions (like sending emails or payments), explicitly confirm the action with the user.";
+
+    private String systemPrompt = "You are VoiceOS, a voice operations assistant. "
+            + "For arithmetic, ALWAYS call the calculator tool with argument expression. "
+            + "Never invent or guess the numeric result. "
+            + "For any other user request, ALWAYS call voiceos_request with the user's utterance. "
+            + "Do not answer general questions yourself. "
+            + "Do not blindly guess names, emails, dates, or locations. "
+            + "If a required value is missing, ask for it.";
 
     public Map<String, Object> toVapiAssistantConfig() {
-        return Map.of(
-                "name", "VoiceOS Orchestrator",
-                "firstMessage", "Hello! I am VoiceOS. How can I help you today?",
-                "model", Map.of(
-                        "provider", "openai",
-                        "model", "gpt-4o",
-                        "messages", new Object[]{
-                                Map.of(
-                                        "role", "system",
-                                        "content", systemPrompt
-                                )
-                        }
-                ),
-                "voice", Map.of(
-                        "provider", "11labs", // Or configurable
-                        "voiceId", voiceId
-                ),
-                "transcriber", Map.of(
-                        "provider", transcriber,
-                        "model", transcriberModel,
-                        "language", language,
-                        "smartFormat", true,
-                        "keywords", new String[]{"VoiceOS", "Vapi", "Spring Boot", "React"}
+        Map<String, Object> model = new LinkedHashMap<>();
+        model.put("provider", "openai");
+        model.put("model", "gpt-4o");
+        model.put("messages", List.of(
+                Map.of("role", "system", "content", systemPrompt)
+        ));
+        model.put("tools", List.of(calculatorTool(), voiceosRequestTool()));
+
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "VoiceOS Calculator");
+        config.put("firstMessage", "Hello! I am VoiceOS. Ask a question or ask me to calculate something.");
+        config.put("model", model);
+        config.put("voice", Map.of(
+                "provider", "11labs",
+                "voiceId", voiceId
+        ));
+        config.put("transcriber", Map.of(
+                "provider", transcriber,
+                "model", transcriberModel,
+                "language", language,
+                "smartFormat", true
+        ));
+        return config;
+    }
+
+    static Map<String, Object> calculatorTool() {
+        Map<String, Object> parameters = new LinkedHashMap<>();
+        parameters.put("type", "object");
+        parameters.put("properties", Map.of(
+                "expression", Map.of(
+                        "type", "string",
+                        "description", "Arithmetic expression such as 125 * 24"
                 )
-        );
+        ));
+        parameters.put("required", List.of("expression"));
+
+        Map<String, Object> function = new LinkedHashMap<>();
+        function.put("name", "calculator");
+        function.put("description", "Evaluate a mathematical expression. Always call this instead of computing the answer yourself.");
+        function.put("parameters", parameters);
+
+        Map<String, Object> tool = new LinkedHashMap<>();
+        tool.put("type", "function");
+        tool.put("function", function);
+        return tool;
+    }
+
+    static Map<String, Object> voiceosRequestTool() {
+        Map<String, Object> parameters = new LinkedHashMap<>();
+        parameters.put("type", "object");
+        parameters.put("properties", Map.of(
+                "utterance", Map.of(
+                        "type", "string",
+                        "description", "The user's original spoken or typed request, unchanged"
+                )
+        ));
+        parameters.put("required", List.of("utterance"));
+
+        Map<String, Object> function = new LinkedHashMap<>();
+        function.put("name", "voiceos_request");
+        function.put("description", "Route any non-arithmetic user request to VoiceOS agents. Pass the original utterance. Do not invent the answer.");
+        function.put("parameters", parameters);
+
+        Map<String, Object> tool = new LinkedHashMap<>();
+        tool.put("type", "function");
+        tool.put("function", function);
+        return tool;
     }
 
     // Getters and Setters

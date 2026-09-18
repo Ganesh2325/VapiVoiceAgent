@@ -1,6 +1,7 @@
 package com.voiceos.agent.core;
 
 import com.voiceos.tool.core.Tool;
+import com.voiceos.tool.core.ToolResult;
 import java.util.List;
 import java.util.Set;
 
@@ -73,5 +74,21 @@ public interface Agent {
         }
         return ownedTools().stream()
                 .anyMatch(tool -> tool != null && tool.getName() != null && tool.getName().equalsIgnoreCase(toolName));
+    }
+
+    /**
+     * Tools this agent may <em>request</em> for ActionEngine to execute after PolicyEngine.
+     * Defaults to {@link #ownsTool(String)}. Fallback agents may allow a smaller server allowlist
+     * without owning those tools for routing.
+     */
+    default boolean allowsTool(String toolName) {
+        return ownsTool(toolName);
+    }
+
+    /**
+     * Continue after ActionEngine executed a requested tool. Default ignores prior results.
+     */
+    default AgentResult continueWith(AgentRequest request, List<ToolResult> toolResults) {
+        return execute(request);
     }
 }

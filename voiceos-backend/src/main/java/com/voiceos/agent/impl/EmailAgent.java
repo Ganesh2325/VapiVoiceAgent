@@ -43,7 +43,17 @@ public class EmailAgent implements Agent {
     @Override
     public boolean canHandle(AgentContext context) {
         String input = context.userInput() != null ? context.userInput().toLowerCase() : "";
-        return input.contains("email") || input.contains("mail to") || input.contains("send a message to");
+        boolean drafting = (input.contains("write") || input.contains("draft") || input.contains("compose"))
+                && !input.contains("send");
+        if (drafting) {
+            return false;
+        }
+        return input.contains("send email")
+                || input.contains("send an email")
+                || input.contains("send that email")
+                || input.contains("email to")
+                || input.contains("mail to")
+                || input.contains("send a message to");
     }
 
     @Override

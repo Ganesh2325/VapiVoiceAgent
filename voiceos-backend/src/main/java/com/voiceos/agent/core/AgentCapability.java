@@ -16,6 +16,7 @@ public enum AgentCapability {
     GITHUB,
     SUPPORT,
     CONVERSATION,
+    GENERAL_QUERY,
     FINANCE,
     PLANNING,
     APPROVAL,

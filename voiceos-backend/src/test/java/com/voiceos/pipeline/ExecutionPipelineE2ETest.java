@@ -97,6 +97,32 @@ class ExecutionPipelineE2ETest {
     }
 
     @Test
+    void liveVapiToolCallListShapeExecutesCalculator() throws Exception {
+        String token = register(uniqueEmail("liveShape"), "password12", "Live Shape").accessToken();
+        String callId = "call-live-shape-" + UUID.randomUUID();
+        bindSession(token, callId);
+        String toolCallId = "toolu_" + UUID.randomUUID();
+
+        mockMvc.perform(post("/api/webhooks/vapi")
+                        .header("x-vapi-secret", "test-secret")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(liveToolCallListPayload(toolCallId, callId, "125 * 24")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.results[0].toolCallId").value(toolCallId))
+                .andExpect(jsonPath("$.results[0].result").value("3000.00"));
+
+        mockMvc.perform(get("/api/v1/actions")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].status").value("COMPLETED"))
+                .andExpect(jsonPath("$[0].agent").value("UtilityAgent"))
+                .andExpect(jsonPath("$[0].tool").value("calculator"))
+                .andExpect(jsonPath("$[0].provider").value("RealLocalCalculatorProvider"))
+                .andExpect(jsonPath("$[0].providerMode").value("REAL"))
+                .andExpect(jsonPath("$[0].result").value("3000.00"));
+    }
+
+    @Test
     void duplicateVapiEventDoesNotExecuteCalculatorTwice() throws Exception {
         String token = register(uniqueEmail("dup"), "password12", "Dup User").accessToken();
         String callId = "call-dup-e2e";
@@ -235,6 +261,141 @@ class ExecutionPipelineE2ETest {
     }
 
     @Test
+    void generalQuestionUsesGeneralQueryAgentAndMockLlm() throws Exception {
+        String token = register(uniqueEmail("gq"), "password12", "General User").accessToken();
+        mockMvc.perform(post("/api/v1/agent/execute")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"input\":\"What is dependency injection in Spring Boot?\",\"agent\":\"TravelAgent\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.agent").value("GeneralQueryAgent"))
+                .andExpect(jsonPath("$.provider").value("mock"))
+                .andExpect(jsonPath("$.providerMode").value("MOCK"))
+                .andExpect(jsonPath("$.success").value(true));
+
+        String actionId = objectMapper.readTree(
+                mockMvc.perform(get("/api/v1/actions")
+                                .header("Authorization", "Bearer " + token))
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString()
+        ).get(0).get("actionId").asText();
+        mockMvc.perform(get("/api/v1/actions/" + actionId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.intent").value("GENERAL_QUESTION"))
+                .andExpect(jsonPath("$.agentOutcome").value("COMPLETED"));
+        mockMvc.perform(get("/api/v1/actions/" + actionId + "/timeline")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.timeline[?(@.type=='AGENT_SELECTED')]").isNotEmpty())
+                .andExpect(jsonPath("$.timeline[?(@.type=='AGENT_STARTED')]").isNotEmpty())
+                .andExpect(jsonPath("$.timeline[?(@.type=='AGENT_SUCCEEDED')]").isNotEmpty())
+                .andExpect(jsonPath("$.timeline[?(@.type=='ACTION_COMPLETED')]").isNotEmpty())
+                .andExpect(jsonPath("$.timeline[?(@.type=='TOOL_SUCCEEDED')]").isEmpty());
+    }
+
+    @Test
+    void vapiLikeGeneralQueryRoutesThroughActionEngine() throws Exception {
+        String token = register(uniqueEmail("vapiGq"), "password12", "Vapi General").accessToken();
+        String callId = "call-gq-" + UUID.randomUUID();
+        bindSession(token, callId);
+        String toolCallId = "tool-gq-" + UUID.randomUUID();
+        mockMvc.perform(post("/api/webhooks/vapi")
+                        .header("x-vapi-secret", "test-secret")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(voiceosRequestPayload(toolCallId, callId, "What is dependency injection in Spring Boot?")))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/v1/actions")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].agent").value("GeneralQueryAgent"))
+                .andExpect(jsonPath("$[0].status").value("COMPLETED"))
+                .andExpect(jsonPath("$[0].providerMode").value("MOCK"));
+    }
+
+    @Test
+    void generalQuestionIsIsolatedBetweenUsers() throws Exception {
+        String tokenA = register(uniqueEmail("gqA"), "password12", "GQ A").accessToken();
+        String tokenB = register(uniqueEmail("gqB"), "password12", "GQ B").accessToken();
+        mockMvc.perform(post("/api/v1/agent/execute")
+                        .header("Authorization", "Bearer " + tokenA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"input\":\"Explain Java streams.\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.agent").value("GeneralQueryAgent"));
+        String actionId = objectMapper.readTree(
+                mockMvc.perform(get("/api/v1/actions")
+                                .header("Authorization", "Bearer " + tokenA))
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString()
+        ).get(0).get("actionId").asText();
+        mockMvc.perform(get("/api/v1/actions/" + actionId)
+                        .header("Authorization", "Bearer " + tokenB))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/actions/" + actionId + "/timeline")
+                        .header("Authorization", "Bearer " + tokenB))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void weatherQuestionDoesNotFabricateCurrentData() throws Exception {
+        String token = register(uniqueEmail("wx"), "password12", "Weather User").accessToken();
+        mockMvc.perform(post("/api/v1/agent/execute")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"input\":\"What is the weather in London right now?\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.agent").value("GeneralQueryAgent"))
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.status").value("FAILED"));
+    }
+
+    @Test
+    void generalQueryToolAssistedCalculatorUsesRealProvider() throws Exception {
+        String token = register(uniqueEmail("p7calc"), "password12", "P7 Calc").accessToken();
+        mockMvc.perform(post("/api/v1/agent/execute")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"input\":\"What is the product of 125 and 24?\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.agent").value("GeneralQueryAgent"))
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.tool").value("calculator"))
+                .andExpect(jsonPath("$.provider").value("RealLocalCalculatorProvider"))
+                .andExpect(jsonPath("$.providerMode").value("REAL"))
+                .andExpect(jsonPath("$.success").value(true));
+        String body = mockMvc.perform(get("/api/v1/actions")
+                        .header("Authorization", "Bearer " + token))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        assertTrue(body.contains("3000"));
+        String actionId = objectMapper.readTree(body).get(0).get("actionId").asText();
+        mockMvc.perform(get("/api/v1/actions/" + actionId + "/timeline")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.timeline[?(@.type=='POLICY_EVALUATED')]").isNotEmpty())
+                .andExpect(jsonPath("$.timeline[?(@.type=='TOOL_SUCCEEDED')]").isNotEmpty());
+    }
+
+    @Test
+    void emailSendRequestRoutesToEmailAgentAndDoesNotSend() throws Exception {
+        String token = register(uniqueEmail("em"), "password12", "Email User").accessToken();
+        mockMvc.perform(post("/api/v1/agent/execute")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"input\":\"Send that email to my professor.\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.agent").value("EmailAgent"))
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.status").value("REQUIRES_APPROVAL"));
+    }
+
+    @Test
     void flightRequestNeedsInformationAndDoesNotComplete() throws Exception {
         String token = register(uniqueEmail("flight"), "password12", "Flight User").accessToken();
         mockMvc.perform(post("/api/v1/agent/execute")
@@ -292,6 +453,7 @@ class ExecutionPipelineE2ETest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[?(@.name=='UtilityAgent')].capabilities").isNotEmpty())
                 .andExpect(jsonPath("$[?(@.name=='UtilityAgent')].ownedTools").isNotEmpty())
+                .andExpect(jsonPath("$[?(@.name=='GeneralQueryAgent')]").isNotEmpty())
                 .andReturn();
         String body = result.getResponse().getContentAsString();
         assertFalse(body.contains("0.92"));
@@ -388,5 +550,43 @@ class ExecutionPipelineE2ETest {
                   "timestamp": "2026-09-17T00:00:00Z"
                 }
                 """.formatted(toolCallId, expression, callId);
+    }
+
+    private static String liveToolCallListPayload(String toolCallId, String callId, String expression) {
+        return """
+                {
+                  "message": {
+                    "type": "tool-calls",
+                    "toolCalls": [],
+                    "toolCallList": [
+                      {
+                        "id": "%s",
+                        "name": "calculator",
+                        "arguments": { "expression": "%s" }
+                      }
+                    ],
+                    "call": { "id": "%s" }
+                  }
+                }
+                """.formatted(toolCallId, expression, callId);
+    }
+
+    private static String voiceosRequestPayload(String toolCallId, String callId, String utterance) {
+        String escaped = utterance.replace("\\", "\\\\").replace("\"", "\\\"");
+        return """
+                {
+                  "message": {
+                    "type": "tool-calls",
+                    "toolCallList": [
+                      {
+                        "id": "%s",
+                        "name": "voiceos_request",
+                        "arguments": { "utterance": "%s" }
+                      }
+                    ],
+                    "call": { "id": "%s" }
+                  }
+                }
+                """.formatted(toolCallId, escaped, callId);
     }
 }

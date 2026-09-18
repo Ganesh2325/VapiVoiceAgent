@@ -62,7 +62,7 @@ public class AgentRegistry {
     }
 
     /**
-     * Specialized handler excluding ConversationAgent fallback. Priority then name.
+     * Specialized handler excluding GeneralQueryAgent fallback. Priority then name.
      */
     public Optional<Agent> findHandler(AgentContext context) {
         return findHandler(AgentRequest.from(context, null));
@@ -123,7 +123,8 @@ public class AgentRegistry {
 
     private static boolean isFallback(Agent agent) {
         String name = agent.getName();
-        return name != null && (name.equalsIgnoreCase("ConversationAgent")
+        return name != null && (name.equalsIgnoreCase("GeneralQueryAgent")
+                || name.equalsIgnoreCase("ConversationAgent")
                 || name.equalsIgnoreCase("OrchestratorAgent"));
     }
 }

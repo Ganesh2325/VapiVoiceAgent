@@ -21,7 +21,7 @@ import com.voiceos.agent.core.AgentResult;
 import com.voiceos.agent.core.AgentSelector;
 import com.voiceos.agent.core.RegistryAgentSelector;
 import com.voiceos.agent.impl.ApprovalAgent;
-import com.voiceos.agent.impl.ConversationAgent;
+import com.voiceos.agent.impl.GeneralQueryAgent;
 import com.voiceos.agent.impl.FinanceAgent;
 import com.voiceos.agent.impl.TravelAgent;
 import com.voiceos.agent.impl.UtilityAgent;
@@ -70,7 +70,7 @@ class AgentContractTest {
         UtilityAgent utility = new UtilityAgent(tools);
         TravelAgent travel = new TravelAgent(tools);
         FinanceAgent finance = new FinanceAgent(tools);
-        ConversationAgent conversation = new ConversationAgent(new MockLLMProvider());
+        GeneralQueryAgent conversation = new GeneralQueryAgent(new MockLLMProvider(), null);
         registry = new AgentRegistry(List.of(utility, travel, finance, conversation,
                 new ApprovalAgent(), new WorkflowAgent(null)));
         selector = new RegistryAgentSelector(registry);
@@ -131,7 +131,7 @@ class AgentContractTest {
 
         AgentRequest chat = new AgentRequest(USER, null, "r3", null, null,
                 "Hello, how are you today?", null, Map.of(), null);
-        assertEquals("ConversationAgent", selector.select(chat).orElseThrow().getName());
+        assertEquals("GeneralQueryAgent", selector.select(chat).orElseThrow().getName());
         assertTrue(registry.findHandler(chat).isEmpty());
     }
 
@@ -259,7 +259,7 @@ class AgentContractTest {
 
     @Test
     void conversationAgentDoesNotExecuteForeignTools() {
-        ConversationAgent conversation = new ConversationAgent(new MockLLMProvider());
+        GeneralQueryAgent conversation = new GeneralQueryAgent(new MockLLMProvider(), null);
         AgentResult result = conversation.execute(new AgentRequest(
                 USER, null, null, null, null, "hi", "calculator", Map.of(), null));
         assertEquals(AgentOutcome.FAILED, result.outcome());

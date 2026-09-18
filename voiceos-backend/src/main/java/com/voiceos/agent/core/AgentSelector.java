@@ -3,8 +3,8 @@ package com.voiceos.agent.core;
 import java.util.Optional;
 
 /**
- * Selects an agent for an action. Deterministic: owned tool, then capability/canHandle,
- * then ConversationAgent fallback.
+ * Selects an agent for an action. Deterministic: owned tool, then canHandle,
+ * then GeneralQueryAgent fallback. IntentClassifier labels requests; it does not pick agents.
  */
 public interface AgentSelector {
 
